@@ -1,4 +1,5 @@
 // app/(tabs)/index.tsx
+import * as Location from "expo-location";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -21,12 +22,16 @@ type Trend = {
   location: string;
   created_at: string;
   user_id: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  // When fetched via RPC:
+  distance_km?: number | null;
 };
 
 const CATS = ["Food", "Event", "Place"] as const;
 
 export default function HomeScreen() {
-  // Theme tokens
+  // ===== Theme =====
   const isDark = useColorScheme() === "dark";
   const colors = {
     bg: isDark ? "#000000" : "#ffffff",
@@ -43,15 +48,14 @@ export default function HomeScreen() {
     danger: "#ef4444",
   };
 
-  // ===== Auth state =====
+  // ===== Auth =====
   const [user, setUser] = useState<any>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
 
-  // ===== Points (Day 5) =====
+  // ===== Points =====
   const [points, setPoints] = useState<number | null>(null);
-
   const loadPoints = useCallback(async () => {
     if (!user) {
       setPoints(null);
@@ -65,7 +69,44 @@ export default function HomeScreen() {
     if (!error && data) setPoints(data.points);
   }, [user]);
 
-  // ===== Form & list state =====
+  // ===== Location (city + precise coords) =====
+  const [userLocation, setUserLocation] = useState<string | null>(null); // e.g., "Boston"
+  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        setLocating(true);
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== "granted") {
+          setLocating(false);
+          Alert.alert("Permission Denied", "Location access is needed to show nearby trends.");
+          return;
+        }
+
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+
+        const places = await Location.reverseGeocodeAsync(pos.coords);
+        const best =
+          places[0]?.city ||
+          places[0]?.subregion ||
+          places[0]?.region ||
+          places[0]?.district ||
+          null;
+        setUserLocation(best);
+      } catch (e: any) {
+        console.warn("Location error:", e?.message ?? e);
+      } finally {
+        setLocating(false);
+      }
+    })();
+  }, []);
+
+  // ===== Form & list =====
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<string>("");
   const [location, setLocation] = useState("");
@@ -74,6 +115,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [query, setQuery] = useState("");
+  const [radiusKm, setRadiusKm] = useState<number>(20); // default radius for nearby search
 
   // ===== Session boot + listener =====
   useEffect(() => {
@@ -81,8 +123,7 @@ export default function HomeScreen() {
       const { data } = await supabase.auth.getSession();
       setUser(data.session?.user ?? null);
     })();
-
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user ?? null);
     });
     return () => {
@@ -91,49 +132,73 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
-    // whenever user changes, refresh their points
     loadPoints();
   }, [loadPoints]);
 
-  // ===== Fetch trends =====
-  const fetchTrends = useCallback(async () => {
+  // ===== Fetch trends (unified: prefer radius RPC if coords exist; else city filter) =====
+  const fetchUnifiedTrends = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("trends")
-      .select("*")
-      .order("created_at", { ascending: false });
 
-    if (error) {
-      console.error(error);
-      Alert.alert("Read error", error.message);
-    } else {
-      setData(data ?? []);
+    try {
+      if (coords) {
+        // Use radius-based RPC
+        const { data, error } = await supabase.rpc("trends_within_radius", {
+          in_lat: coords.lat,
+          in_lng: coords.lng,
+          radius_km: radiusKm,
+        });
+        if (error) {
+          console.error("RPC read error:", error);
+          // Fall back to city search if RPC fails
+          throw error;
+        }
+        setData((data as Trend[]) ?? []);
+      } else {
+        // Fallback: city-based filter
+        const qb = supabase
+          .from("trends")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (userLocation && userLocation.trim()) {
+          qb.ilike("location", `%${userLocation}%`);
+        }
+
+        const { data, error } = await qb;
+        if (error) throw error;
+        setData((data as Trend[]) ?? []);
+      }
+    } catch (err: any) {
+      console.error(err);
+      Alert.alert("Read error", err?.message ?? "Failed to load trends");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  }, []);
+  }, [coords, radiusKm, userLocation]);
 
   useEffect(() => {
-    fetchTrends();
-  }, [fetchTrends]);
+    // initial + any time dependencies change
+    fetchUnifiedTrends();
+  }, [fetchUnifiedTrends]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await fetchTrends();
+    await fetchUnifiedTrends();
     setRefreshing(false);
-  }, [fetchTrends]);
+  }, [fetchUnifiedTrends]);
 
-  // ===== Realtime auto-refresh =====
+  // ===== Realtime refresh =====
   useEffect(() => {
     const channel = supabase
       .channel("trends-rt")
-      .on("postgres_changes", { event: "*", schema: "public", table: "trends" }, fetchTrends)
+      .on("postgres_changes", { event: "*", schema: "public", table: "trends" }, fetchUnifiedTrends)
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchTrends]);
+  }, [fetchUnifiedTrends]);
 
-  // ===== AUTH actions =====
+  // ===== Auth actions =====
   const handleSignUp = useCallback(async () => {
     if (!email || !password) {
       Alert.alert("Missing info", "Enter email and password.");
@@ -148,7 +213,7 @@ export default function HomeScreen() {
       return;
     }
 
-    // Optional (safe) manual profile creation if you didn't add the DB trigger
+    // Optional manual profile creation (safe if DB trigger not added)
     const newUserId = data?.user?.id;
     if (newUserId) {
       await supabase.from("user_profiles").insert({ id: newUserId }).select();
@@ -181,7 +246,7 @@ export default function HomeScreen() {
     setPoints(null);
   }, []);
 
-  // ===== Submit trend (with points award via RPC) =====
+  // ===== Submit trend (with lat/lng + points) =====
   const canSubmit = useMemo(
     () => !!title.trim() && !!category.trim() && !!location.trim() && !submitting,
     [title, category, location, submitting]
@@ -197,9 +262,31 @@ export default function HomeScreen() {
     const l = location.trim();
 
     setSubmitting(true);
+
+    // Capture GPS, then geocode fallback
+    let lat: number | null = null;
+    let lng: number | null = null;
+
+    try {
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      lat = pos.coords.latitude;
+      lng = pos.coords.longitude;
+    } catch (e) {
+      console.warn("Could not read GPS, falling back to geocode:", e);
+      try {
+        const matches = await Location.geocodeAsync(l);
+        if (matches.length > 0) {
+          lat = matches[0].latitude;
+          lng = matches[0].longitude;
+        }
+      } catch (ge) {
+        console.warn("Geocoding failed:", ge);
+      }
+    }
+
     const { data: inserted, error: insertError } = await supabase
       .from("trends")
-      .insert([{ title: t, category: c, location: l, user_id: user.id }])
+      .insert([{ title: t, category: c, location: l, user_id: user.id, lat, lng }])
       .select();
 
     if (insertError) {
@@ -208,31 +295,35 @@ export default function HomeScreen() {
       return;
     }
 
-    // Award +10 points using RPC
-    const { error: rpcErr } = await supabase.rpc("increment_points", {
+    // Points RPC
+    const { data: newPoints, error: rpcErr } = await supabase.rpc("increment_points", {
       user_id_input: user.id,
-      amount: 10, // optional; defaults to 10 if omitted
+      amount: 10,
     });
-    setSubmitting(false);
-
     if (rpcErr) {
-      console.error("Error awarding points:", rpcErr.message);
-      // We don't block success UI if points failed—just log it.
+      console.warn("Points RPC error:", rpcErr.message);
+      // Fallback refresh if RPC returns void:
+      await loadPoints();
+    } else if (typeof newPoints === "number") {
+      setPoints(newPoints);
+    } else {
+      await loadPoints();
     }
 
-    // Optimistic UI: prepend new item
+    // Optimistic prepend
     if (inserted?.length) setData((prev) => [inserted[0] as Trend, ...prev]);
-
-    // Refresh points display
-    loadPoints();
 
     setTitle("");
     setCategory("");
     setLocation("");
+    setSubmitting(false);
     Alert.alert("Success", "Trend submitted and points awarded!");
-  }, [title, category, location, user, loadPoints]);
 
-  // ===== Client-side search/filter =====
+    // Re-fetch using current mode (radius or city)
+    fetchUnifiedTrends();
+  }, [title, category, location, user, loadPoints, fetchUnifiedTrends]);
+
+  // ===== Client-side search & category filter =====
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const matchQ = (t: Trend) =>
@@ -258,12 +349,68 @@ export default function HomeScreen() {
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
       <Text style={[styles.h1, { color: colors.text }]}>Locova Trends 🌍</Text>
 
+      {/* Location banner + radius control */}
+      {locating ? (
+        <Text style={{ color: colors.sub, marginBottom: 8 }}>📍 Detecting your location…</Text>
+      ) : userLocation ? (
+        <View style={{ gap: 8, marginBottom: 8 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ color: colors.text }}>
+              📍 Showing trends near <Text style={{ fontWeight: "700" }}>{userLocation}</Text>
+            </Text>
+            <Pressable
+              onPress={async () => {
+                try {
+                  setLocating(true);
+                  const { status } = await Location.requestForegroundPermissionsAsync();
+                  if (status !== "granted") return;
+                  const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                  setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+                  const places = await Location.reverseGeocodeAsync(pos.coords);
+                  const best =
+                    places[0]?.city ||
+                    places[0]?.subregion ||
+                    places[0]?.region ||
+                    places[0]?.district ||
+                    null;
+                  setUserLocation(best);
+                } finally {
+                  setLocating(false);
+                }
+              }}
+              style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}
+            >
+              <Text style={{ color: colors.text }}>Use GPS again</Text>
+            </Pressable>
+          </View>
+
+          {/* Radius input (only useful when coords exist) */}
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ color: colors.sub }}>Radius (km):</Text>
+            <TextInput
+              style={[styles.input, { borderColor: colors.border, color: colors.text, width: 140, marginBottom: 0 }]}
+              keyboardType="numeric"
+              placeholder="e.g., 20"
+              placeholderTextColor={colors.sub}
+              value={String(radiusKm)}
+              onChangeText={(v) => {
+                const n = Number(v);
+                if (!isNaN(n)) setRadiusKm(n);
+              }}
+            />
+          </View>
+        </View>
+      ) : (
+        <Text style={{ color: colors.sub, marginBottom: 8 }}>
+          📍 Location off. Turn it on to see nearby trends (or type a city in the filter/search).
+        </Text>
+      )}
+
       {/* AUTH BOX */}
       <View style={[styles.authBox, { borderColor: colors.border }]}>
         {!user ? (
           <>
             <Text style={[styles.h2, { color: colors.text }]}>Login or Sign Up</Text>
-
             <TextInput
               style={[styles.input, { borderColor: colors.border, color: colors.text }]}
               placeholder="Email"
@@ -302,9 +449,7 @@ export default function HomeScreen() {
           <View style={styles.rowBetween}>
             <View>
               <Text style={{ color: colors.text }}>Welcome, {user.email}</Text>
-              {points !== null && (
-                <Text style={{ color: colors.text, marginTop: 4 }}>🏆 Your Points: {points}</Text>
-              )}
+              {points !== null && <Text style={{ color: colors.text, marginTop: 4 }}>🏆 Your Points: {points}</Text>}
             </View>
             <Pressable
               disabled={authBusy}
@@ -317,7 +462,7 @@ export default function HomeScreen() {
         )}
       </View>
 
-      {/* SEARCH */}
+      {/* Search */}
       <TextInput
         style={[styles.input, { borderColor: colors.border, color: colors.text }]}
         placeholder="Search (title/category/location)…"
@@ -328,7 +473,7 @@ export default function HomeScreen() {
         returnKeyType="search"
       />
 
-      {/* CATEGORY CHIPS */}
+      {/* Category chips */}
       <View style={styles.chipsRow}>
         {CATS.map((c) => {
           const active = category === c;
@@ -344,15 +489,13 @@ export default function HomeScreen() {
                 },
               ]}
             >
-              <Text style={{ color: active ? colors.chipActiveText : colors.text, fontWeight: "600" }}>
-                {c}
-              </Text>
+              <Text style={{ color: active ? colors.chipActiveText : colors.text, fontWeight: "600" }}>{c}</Text>
             </Pressable>
           );
         })}
       </View>
 
-      {/* SUBMIT FORM */}
+      {/* Submit form */}
       <Text style={[styles.h2, { color: colors.text }]}>Submit a New Trend</Text>
       <TextInput
         style={[styles.input, { borderColor: colors.border, color: colors.text }]}
@@ -372,7 +515,7 @@ export default function HomeScreen() {
       />
       <TextInput
         style={[styles.input, { borderColor: colors.border, color: colors.text }]}
-        placeholder="Location (e.g., Boston)"
+        placeholder="Location (city, e.g., Boston)"
         placeholderTextColor={colors.sub}
         value={location}
         onChangeText={setLocation}
@@ -386,12 +529,10 @@ export default function HomeScreen() {
           { backgroundColor: colors.buttonBg, alignSelf: "flex-start", opacity: canSubmit ? 1 : 0.6 },
         ]}
       >
-        <Text style={[styles.buttonText, { color: colors.buttonText }]}>
-          {submitting ? "Submitting…" : "Submit Trend"}
-        </Text>
+        <Text style={[styles.buttonText, { color: colors.buttonText }]}>{submitting ? "Submitting…" : "Submit Trend"}</Text>
       </Pressable>
 
-      {/* LIST */}
+      {/* List */}
       {filtered.length === 0 ? (
         <Text style={{ color: colors.sub, marginTop: 12 }}>No trends yet.</Text>
       ) : (
@@ -407,7 +548,9 @@ export default function HomeScreen() {
                 {item.category} • {item.location}
               </Text>
               <Text style={{ color: colors.sub, marginTop: 4, fontSize: 12 }}>
-                {new Date(item.created_at).toLocaleString()}
+                {typeof item.distance_km === "number"
+                  ? `${item.distance_km.toFixed(1)} km away`
+                  : new Date(item.created_at).toLocaleString()}
               </Text>
             </View>
           )}
