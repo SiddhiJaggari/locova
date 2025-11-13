@@ -12,7 +12,9 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Locova uses your location to show nearby trends."
+        "NSLocationWhenInUseUsageDescription": "Locova uses your location to show nearby trends.",
+        "NSPhotoLibraryUsageDescription": "Locova lets you pick a profile photo from your library.",
+        "NSCameraUsageDescription": "Locova uses the camera so you can take a profile photo."
       }
     },
 
@@ -27,7 +29,8 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "CAMERA"
       ]
     },
 

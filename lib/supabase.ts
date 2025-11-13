@@ -1,15 +1,11 @@
-// locova/lib/supabase.ts
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import { createClient } from '@supabase/supabase-js'
+// lib/supabase.ts
+import { createClient } from '@supabase/supabase-js';
 
-const url = process.env.EXPO_PUBLIC_SUPABASE_URL!
-const anon = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL as string;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY as string;
 
-export const supabase = createClient(url, anon, {
-  auth: {
-    storage: AsyncStorage,          // persist session on device
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,      // no web redirects in Expo Go
-  },
-})
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  throw new Error('Missing Supabase environment variables');
+}
+
+export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
