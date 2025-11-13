@@ -1,8 +1,12 @@
 {
   "typescript.disableAutomaticTypeAcquisition": true,
   "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.tsserver.maxTsServerMemory": 4096,
   "problems.exclude": {
-    "**/node_modules/**": true
+    "**/node_modules/**": true,
+    "**/.expo/**": true,
+    "**/dist/**": true,
+    "**/build/**": true
   },
   "search.exclude": {
     "**/node_modules/**": true

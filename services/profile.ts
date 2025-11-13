@@ -60,3 +60,23 @@ export async function uploadAvatarPublic(
 
   return url;
 }
+
+/**
+ * Save the push token to the user's profile in Supabase
+ */
+export async function savePushTokenToProfile(
+  userId: string,
+  token: string
+): Promise<void> {
+  const { error } = await supabase
+    .from("user_profiles")
+    .update({ expo_push_token: token })
+    .eq("id", userId);
+
+  if (error) {
+    console.error("Failed to save push token:", error);
+    throw error;
+  }
+
+  console.log("Push token saved to profile");
+}

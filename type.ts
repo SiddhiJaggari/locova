@@ -23,6 +23,7 @@ export type UserProfile = {
   points: number;
   display_name?: string | null;
   avatar_url?: string | null;
+  expo_push_token?: string | null;
   created_at?: string;
 };
 

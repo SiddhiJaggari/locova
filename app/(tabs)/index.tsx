@@ -1,6 +1,8 @@
 // app/(tabs)/index.tsx
 import { Session } from "@supabase/supabase-js";
+import * as Device from "expo-device";
 import * as Location from "expo-location";
+import * as Notifications from "expo-notifications";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -12,17 +14,62 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View,
+  View
 } from "react-native";
 
 import ProfileEditor from "../../components/ProfileEditor";
 import { supabase } from "../../lib/supabase";
 import {
   getMyProfile,
+  // savePushTokenToProfile, // Disabled for Expo Go
   uploadAvatarPublic,
-  upsertMyProfile,
+  upsertMyProfile
 } from "../../services/profile";
 import { LeaderboardRow, Trend, UserProfile } from "../../type";
+
+// Configure notification handler
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
+
+/**
+ * Request notification permissions and get the Expo push token
+ */
+async function registerForPushNotificationsAsync(): Promise<string | null> {
+  if (!Device.isDevice) {
+    console.warn("Push notifications only work on physical devices");
+    return null;
+  }
+
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+
+  if (existingStatus !== "granted") {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== "granted") {
+    console.warn("Notification permission denied");
+    return null;
+  }
+
+  try {
+    const tokenData = await Notifications.getExpoPushTokenAsync();
+    const token = tokenData.data;
+    console.log("📱 Expo Push Token:", token);
+    return token;
+  } catch (error) {
+    console.error("Failed to get push token:", error);
+    return null;
+  }
+}
 
 const colors = {
   bg: "#050816",
@@ -631,6 +678,81 @@ export default function HomeScreen() {
         {profileLoading && (
           <ActivityIndicator color={colors.sub} size="small" />
         )}
+
+        {/* Notification Status & Test */}
+        <View style={{ marginTop: 16, padding: 12, backgroundColor: colors.cardBg, borderRadius: 8 }}>
+          <Text style={{ color: colors.text, fontWeight: "600", marginBottom: 8 }}>
+            🔔 Push Notifications
+          </Text>
+          
+          {profile?.expo_push_token ? (
+            <>
+              <View
+                style={{
+                  padding: 8,
+                  backgroundColor: "#10b98122",
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  borderColor: "#10b981",
+                  marginBottom: 8,
+                }}
+              >
+                <Text style={{ color: "#10b981", fontSize: 12, fontWeight: "600" }}>
+                  ✅ Enabled
+                </Text>
+              </View>
+              
+              <Text style={{ color: colors.sub, fontSize: 11, marginBottom: 8 }}>
+                Token: {profile.expo_push_token.substring(0, 30)}...
+              </Text>
+              
+              <Pressable
+                onPress={() => {
+                  Alert.alert(
+                    "Test Notifications",
+                    `Your push token:\n\n${profile.expo_push_token}\n\nTo test:\n1. Copy this token\n2. Go to expo.dev/notifications\n3. Paste token and send a test notification`,
+                    [
+                      { text: "Cancel" },
+                      {
+                        text: "Copy Token",
+                        onPress: () => {
+                          // In a real app, use Clipboard API
+                          console.log("📱 Push Token:", profile.expo_push_token);
+                          Alert.alert("Copied", "Check console for token");
+                        },
+                      },
+                    ]
+                  );
+                }}
+                style={[
+                  styles.button,
+                  { backgroundColor: colors.buttonBg, paddingVertical: 8 },
+                ]}
+              >
+                <Text style={[styles.buttonText, { color: colors.buttonText, fontSize: 12 }]}>
+                  Test Notifications
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <View
+              style={{
+                padding: 8,
+                backgroundColor: "#ef444422",
+                borderRadius: 6,
+                borderWidth: 1,
+                borderColor: "#ef4444",
+              }}
+            >
+              <Text style={{ color: "#ef4444", fontSize: 12, fontWeight: "600" }}>
+                ⚠️ Not Available in Expo Go
+              </Text>
+              <Text style={{ color: colors.sub, fontSize: 11, marginTop: 4 }}>
+                Requires development build
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
 
       {/* Location & radius */}
