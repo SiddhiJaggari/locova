@@ -31,4 +31,5 @@ export type LeaderboardRow = {
   id: string;
   points: number;
   display_name?: string | null;
+  avatar_url?: string | null;
 };

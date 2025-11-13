@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -416,18 +417,58 @@ export default function HomeScreen() {
     </View>
   );
 
-  const renderLeaderboardItem = ({ item }: { item: LeaderboardRow }) => (
-    <View style={[styles.lbRow, { borderColor: colors.border }]}>
-      <View>
-        <Text style={{ color: colors.text, fontWeight: "600" }}>
-          {item.display_name || "Anonymous"}
+  const renderLeaderboardItem = ({ item, index }: { item: LeaderboardRow; index: number }) => {
+    const isYou = session?.user && session.user.id === item.id;
+    const name = item.display_name || "Anonymous";
+    const avatarUri = item.avatar_url ? item.avatar_url + "?v=" + Date.now() : null;
+
+    return (
+      <View
+        style={[
+          styles.lbRow,
+          { borderColor: colors.border, backgroundColor: isYou ? "#0ea5e922" : "transparent" },
+        ]}
+      >
+        <Text style={{ color: colors.text, fontWeight: "800", width: 28, textAlign: "right" }}>#{index + 1}</Text>
+        
+        {avatarUri ? (
+          <Image
+            source={{ uri: avatarUri }}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              backgroundColor: colors.border,
+              marginLeft: 8,
+            }}
+          />
+        ) : (
+          <View
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 16,
+              backgroundColor: colors.border,
+              alignItems: "center",
+              justifyContent: "center",
+              marginLeft: 8,
+            }}
+          >
+            <Text style={{ color: colors.sub, fontSize: 12 }}>👤</Text>
+          </View>
+        )}
+        
+        <View style={{ flex: 1, marginLeft: 8 }}>
+          <Text style={{ color: colors.text, fontWeight: "600" }}>
+            {name}{isYou ? " (You)" : ""}
+          </Text>
+        </View>
+        <Text style={{ color: colors.text, fontWeight: "700" }}>
+          {item.points} pts
         </Text>
       </View>
-      <Text style={{ color: colors.text, fontWeight: "700" }}>
-        {item.points} pts
-      </Text>
-    </View>
-  );
+    );
+  };
 
   if (initialLoading) {
     return (
@@ -805,11 +846,66 @@ export default function HomeScreen() {
           <FlatList
             data={leaderboard}
             keyExtractor={(item) => item.id}
-            renderItem={renderLeaderboardItem}
+            renderItem={({ item, index }) => renderLeaderboardItem({ item, index })}
             scrollEnabled={false}
             contentContainerStyle={{ paddingTop: 8 }}
           />
         )}
+        
+        {/* Your Rank if not in top 10 */}
+        {!leaderboardLoading &&
+          leaderboard.length > 0 &&
+          session?.user &&
+          !leaderboard.some((item) => item.id === session.user.id) &&
+          profile && (
+            <View
+              style={{
+                marginTop: 16,
+                padding: 12,
+                borderWidth: 1,
+                borderColor: colors.border,
+                borderRadius: 12,
+                backgroundColor: "#0ea5e922",
+              }}
+            >
+              <Text style={{ color: colors.sub, fontSize: 12, marginBottom: 4 }}>Your Rank</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                <Text style={{ color: colors.text, fontWeight: "800", width: 28, textAlign: "right" }}>#?</Text>
+                
+                {profile.avatar_url ? (
+                  <Image
+                    source={{ uri: profile.avatar_url + "?v=" + Date.now() }}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 16,
+                      backgroundColor: colors.border,
+                    }}
+                  />
+                ) : (
+                  <View
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 16,
+                      backgroundColor: colors.border,
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Text style={{ color: colors.sub, fontSize: 12 }}>👤</Text>
+                  </View>
+                )}
+                
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontWeight: "600" }}>
+                    {profile.display_name || "You"}
+                  </Text>
+                </View>
+                <Text style={{ color: colors.text, fontWeight: "700" }}>{profile.points} pts</Text>
+              </View>
+            </View>
+          )}
       </View>
     </ScrollView>
   );
