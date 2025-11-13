@@ -14,12 +14,12 @@ import {
 
 type Props = {
   colors: any;
-  userId: string;
+  userId: string; // not used directly here, but handy if you want future tweaks
   initialDisplayName?: string;
   initialAvatarUrl?: string | null;
   onSave: (params: {
     displayName: string;
-    avatarUrl: string | null;
+    avatarUrl: string | null; // URI or existing URL
   }) => Promise<void>;
 };
 
@@ -30,10 +30,10 @@ export default function ProfileEditor({
   initialAvatarUrl,
   onSave,
 }: Props) {
-  const [displayName, setDisplayName] =
-    useState(initialDisplayName);
-  const [localImage, setLocalImage] =
-    useState<{ uri: string } | null>(null);
+  const [displayName, setDisplayName] = useState(initialDisplayName);
+  const [localImage, setLocalImage] = useState<{ uri: string } | null>(
+    null
+  );
   const [uploading, setUploading] = useState(false);
 
   const pickImage = useCallback(async () => {
@@ -46,7 +46,6 @@ export default function ProfileEditor({
       });
 
       if (!result.canceled) {
-        console.log("Picked image uri:", result.assets[0].uri);
         setLocalImage({ uri: result.assets[0].uri });
       }
     } catch (e) {
@@ -57,8 +56,7 @@ export default function ProfileEditor({
 
   const takePhoto = useCallback(async () => {
     try {
-      const perm =
-        await ImagePicker.requestCameraPermissionsAsync();
+      const perm = await ImagePicker.requestCameraPermissionsAsync();
       if (perm.status !== "granted") {
         Alert.alert(
           "Permission needed",
@@ -75,7 +73,6 @@ export default function ProfileEditor({
       });
 
       if (!result.canceled) {
-        console.log("Camera image uri:", result.assets[0].uri);
         setLocalImage({ uri: result.assets[0].uri });
       }
     } catch (e) {
@@ -88,18 +85,10 @@ export default function ProfileEditor({
     try {
       setUploading(true);
 
-      // Debug what we’re sending
-      Alert.alert(
-        "Debug ProfileEditor",
-        `localImage uri: ${
-          localImage?.uri ?? "NULL"
-        }\ninitialAvatarUrl: ${initialAvatarUrl ?? "NULL"}`
-      );
-
       await onSave({
         displayName,
         avatarUrl: localImage
-          ? localImage.uri
+          ? localImage.uri // local file URI → handled in index.tsx
           : initialAvatarUrl
           ? initialAvatarUrl
           : null,
@@ -107,6 +96,7 @@ export default function ProfileEditor({
 
       Alert.alert("Success", "Profile updated!");
     } catch (e: any) {
+      console.error("ProfileEditor handleSave error:", e);
       Alert.alert("Update failed", e?.message ?? "Unknown error");
     } finally {
       setUploading(false);

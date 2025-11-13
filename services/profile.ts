@@ -24,8 +24,7 @@ export async function upsertMyProfile(
 ): Promise<void> {
   const { error } = await supabase
     .from("user_profiles")
-    .update(updates)
-    .eq("id", userId);
+    .upsert({ id: userId, ...updates }, { onConflict: "id" });
 
   if (error) throw error;
 }
@@ -36,14 +35,14 @@ export async function upsertMyProfile(
  */
 export async function uploadAvatarPublic(
   userId: string,
-  file: Blob,
+  file: ArrayBuffer | Uint8Array,
   extension = "jpg"
 ): Promise<string> {
   const filePath = `${userId}/avatar-${Date.now()}.${extension}`;
 
   const { error: uploadError } = await supabase.storage
     .from("avatars")
-    .upload(filePath, file, {
+    .upload(filePath, file as any, {
       upsert: true,
       contentType: "image/jpeg",
     });

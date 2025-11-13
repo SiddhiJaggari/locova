@@ -1,27 +1,19 @@
 // app/(tabs)/index.tsx
-import { Buffer } from "buffer";
-import { File } from "expo-file-system";
-import * as ImageManipulator from "expo-image-manipulator";
+import { Session } from "@supabase/supabase-js";
 import * as Location from "expo-location";
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Image,
   Pressable,
-  RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  useColorScheme,
   View,
 } from "react-native";
+
 import ProfileEditor from "../../components/ProfileEditor";
 import { supabase } from "../../lib/supabase";
 import {
@@ -29,982 +21,891 @@ import {
   uploadAvatarPublic,
   upsertMyProfile,
 } from "../../services/profile";
-import { Trend, UserProfile } from "../../types";
+import { LeaderboardRow, Trend, UserProfile } from "../../types";
 
-globalThis.Buffer = globalThis.Buffer || Buffer;
+const colors = {
+  bg: "#050816",
+  cardBg: "#0b1120",
+  text: "#f9fafb",
+  sub: "#9ca3af",
+  border: "#1f2937",
+  buttonBg: "#2563eb",
+  buttonText: "#f9fafb",
+  danger: "#ef4444",
+};
 
-type LeaderboardRow = {
-  id: string;
-  points: number;
-  display_name?: string | null;
-  avatar_url?: string | null;
+type SaveProfileParams = {
+  displayName: string;
+  avatarUrl: string | null; // URI from ProfileEditor
 };
 
 export default function HomeScreen() {
-  const scheme = useColorScheme();
-  const isDark = scheme === "dark";
-
-  const colors = useMemo(
-    () => ({
-      bg: isDark ? "#000" : "#f9fafb",
-      text: isDark ? "#f9fafb" : "#111827",
-      sub: isDark ? "#9ca3af" : "#6b7280",
-      cardBg: isDark ? "#111827" : "#ffffff",
-      cardBorder: isDark ? "#1f2937" : "#e5e7eb",
-      border: isDark ? "#374151" : "#e5e7eb",
-      buttonBg: "#2563eb",
-      buttonText: "#ffffff",
-      danger: "#dc2626",
-    }),
-    [isDark]
-  );
-
-  // ---------- AUTH ----------
-  const [user, setUser] = useState<any | null>(null);
+  // Auth
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoginMode, setIsLoginMode] = useState(true);
 
-  // ---------- PROFILE ----------
+  // Profile
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
 
-  // ---------- TRENDS ----------
-  const [data, setData] = useState<Trend[]>([]);
-  const [title, setTitle] = useState("");
-  const [category, setCategory] = useState("");
-  const [locationInput, setLocationInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  // Trends
+  const [trends, setTrends] = useState<Trend[]>([]);
+  const [trendsLoading, setTrendsLoading] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newCategory, setNewCategory] = useState("Food");
+  const [newLocationText, setNewLocationText] = useState("");
 
-  // ---------- LOCATION / RADIUS ----------
-  const [userLocation, setUserLocation] = useState<string | null>(null);
-  const [locating, setLocating] = useState(false);
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(
-    null
-  );
-  const [radiusKm, setRadiusKm] = useState<number>(20);
+  // Location & radius
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [currentLat, setCurrentLat] = useState<number | null>(null);
+  const [currentLng, setCurrentLng] = useState<number | null>(null);
+  const [currentCity, setCurrentCity] = useState<string | null>(null);
+  const [radiusKm, setRadiusKm] = useState<string>("5"); // text input
 
-  // ---------- POINTS ----------
-  const [points, setPoints] = useState<number | null>(null);
-
-  // ---------- LEADERBOARD ----------
+  // Leaderboard
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
-  const [lbLoading, setLbLoading] = useState(false);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
 
-  // ---------- SESSION BOOTSTRAP ----------
+  // Global loading (initial)
+  const [initialLoading, setInitialLoading] = useState(true);
+
+  // -----------------------
+  // Auth: Session listener
+  // -----------------------
   useEffect(() => {
-    let sub: any;
+    let isMounted = true;
 
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      setUser(data.session?.user ?? null);
+      const { data, error } = await supabase.auth.getSession();
+      if (error) {
+        console.error("getSession error:", error.message);
+      }
+      if (!isMounted) return;
+      setSession(data.session ?? null);
+      setAuthLoading(false);
 
-      const { data: listener } = supabase.auth.onAuthStateChange(
-        (_event, session) => {
-          setUser(session?.user ?? null);
-        }
-      );
-
-      sub = listener;
+      if (data.session?.user) {
+        await Promise.all([
+          loadProfile(data.session.user.id),
+          loadTrends(),
+          loadLeaderboard(),
+        ]);
+      }
+      setInitialLoading(false);
     })();
 
+    const {
+      data: authListener,
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setSession(session ?? null);
+      if (session?.user) {
+        loadProfile(session.user.id);
+        loadTrends();
+        loadLeaderboard();
+      } else {
+        setProfile(null);
+        setTrends([]);
+        setLeaderboard([]);
+      }
+    });
+
     return () => {
-      sub?.subscription?.unsubscribe();
+      isMounted = false;
+      authListener.subscription.unsubscribe();
     };
   }, []);
 
-  // ---------- GEOLOCATION (city + coords) ----------
-  useEffect(() => {
-    (async () => {
-      try {
-        setLocating(true);
-        const { status } =
-          await Location.requestForegroundPermissionsAsync();
-        if (status !== "granted") {
-          setLocating(false);
-          Alert.alert(
-            "Permission Denied",
-            "Location access is needed to show nearby trends."
-          );
-          return;
-        }
-
-        const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
-
-        setCoords({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-        });
-
-        const places = await Location.reverseGeocodeAsync(pos.coords);
-        const best =
-          places[0]?.city ||
-          places[0]?.subregion ||
-          places[0]?.region ||
-          places[0]?.district ||
-          null;
-        setUserLocation(best);
-      } catch (e: any) {
-        console.warn("Location error:", e?.message ?? e);
-      } finally {
-        setLocating(false);
-      }
-    })();
+  // -----------------------
+  // Loaders
+  // -----------------------
+  const loadProfile = useCallback(async (userId: string) => {
+    try {
+      setProfileLoading(true);
+      const data = await getMyProfile(userId);
+      setProfile(data);
+    } catch (e) {
+      console.error("loadProfile error:", e);
+    } finally {
+      setProfileLoading(false);
+    }
   }, []);
 
-  // ---------- LOAD PROFILE + POINTS + LEADERBOARD WHEN USER CHANGES ----------
-  useEffect(() => {
-    (async () => {
-      if (!user) {
-        setProfile(null);
-        setPoints(null);
-        setLeaderboard([]);
-        return;
-      }
+  const loadTrends = useCallback(async () => {
+    try {
+      setTrendsLoading(true);
+      const { data, error } = await supabase
+        .from("trends")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
 
-      const p = await getMyProfile(user.id);
-      setProfile(p);
-
-      await loadPoints(user.id);
-      await loadLeaderboard();
-    })();
-  }, [user]);
-
-  // ---------- LOAD TRENDS WHEN LOCATION / RADIUS CHANGES ----------
-  useEffect(() => {
-    fetchTrends();
-  }, [coords, userLocation, radiusKm]);
-
-  // ---------- HELPERS ----------
-
-  const loadPoints = useCallback(async (userId: string) => {
-    const { data, error } = await supabase
-      .from("user_profiles")
-      .select("points")
-      .eq("id", userId)
-      .single();
-
-    if (!error && data?.points !== undefined) {
-      setPoints(data.points);
+      if (error) throw error;
+      setTrends((data ?? []) as Trend[]);
+    } catch (e) {
+      console.error("loadTrends error:", e);
+      Alert.alert("Error", "Failed to load trends");
+    } finally {
+      setTrendsLoading(false);
     }
   }, []);
 
   const loadLeaderboard = useCallback(async () => {
-    setLbLoading(true);
-
-    // Privacy-first RPC (top_leaderboard)
-    const { data, error } = await supabase.rpc("top_leaderboard", {
-      limit_count: 10,
-    });
-
-    setLbLoading(false);
-
-    if (error) {
-      console.error("Error loading leaderboard:", error);
-      return;
-    }
-
-    setLeaderboard((data as LeaderboardRow[]) ?? []);
-  }, []);
-
-  const fetchTrends = useCallback(async () => {
-    setLoading(true);
-
     try {
-      // If we have precise coords, prefer RPC radius search
-      if (coords) {
-        const { data, error } = await supabase.rpc(
-          "trends_within_radius",
-          {
-            in_lat: coords.lat,
-            in_lng: coords.lng,
-            radius_km: radiusKm,
-          }
-        );
-
-        if (error) {
-          console.error("Radius RPC error:", error);
-          Alert.alert("Read error", error.message);
-        } else {
-          setData((data as Trend[]) ?? []);
-        }
-        return;
-      }
-
-      // Fallback: filter by city text
-      let query = supabase
-        .from("trends")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (userLocation && userLocation.trim()) {
-        query = query.ilike("location", `%${userLocation}%`);
-      }
-
-      const { data, error } = await query;
-
-      if (error) {
-        console.error("Fetch trends error:", error);
-        Alert.alert("Read error", error.message);
-      } else {
-        setData((data as Trend[]) ?? []);
-      }
-    } finally {
-      setLoading(false);
-    }
-  }, [coords, radiusKm, userLocation]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await fetchTrends();
-    setRefreshing(false);
-  }, [fetchTrends]);
-
-  // ---------- AUTH HANDLERS ----------
-  const handleSignUp = useCallback(async () => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (error) {
-      Alert.alert("Signup Error", error.message);
-      return;
-    }
-
-    const newUserId = data?.user?.id;
-    if (newUserId) {
-      // If trigger exists, this will be ignored; otherwise we seed profile
-      await supabase
-        .from("user_profiles")
-        .insert({ id: newUserId })
-        .select();
-    }
-
-    Alert.alert(
-      "Success",
-      "Check your email to confirm your account!"
-    );
-  }, [email, password]);
-
-  const handleLogin = useCallback(async () => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-
-    if (error) {
-      Alert.alert("Login Failed", error.message);
-      return;
-    }
-
-    Alert.alert("Welcome back!");
-  }, [email, password]);
-
-  const handleLogout = useCallback(async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    setProfile(null);
-    setPoints(null);
-  }, []);
-
-  // ---------- SUBMIT TREND ----------
-  const handleSubmitTrend = useCallback(async () => {
-    if (!user) {
-      Alert.alert("Login Required", "Please log in to submit a trend.");
-      return;
-    }
-
-    if (!title || !category || !locationInput) {
-      Alert.alert("Missing info", "Please fill all fields.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-
-      let lat: number | null = coords?.lat ?? null;
-      let lng: number | null = coords?.lng ?? null;
-
-      const { data: inserted, error: insertError } = await supabase
-        .from("trends")
-        .insert([
-          {
-            title,
-            category,
-            location: locationInput,
-            user_id: user.id,
-            lat,
-            lng,
-          },
-        ])
-        .select();
-
-      if (insertError) {
-        Alert.alert("Error", insertError.message);
-        return;
-      }
-
-      // Award points via RPC (+10)
-      const { error: rpcErr } = await supabase.rpc(
-        "increment_points",
-        {
-          user_id_input: user.id,
-          amount: 10,
-        }
-      );
-      if (rpcErr) {
-        console.error("Error awarding points:", rpcErr.message);
-      }
-
-      setTitle("");
-      setCategory("");
-      setLocationInput("");
-
-      await loadPoints(user.id);
-      await loadLeaderboard();
-      await fetchTrends();
-
-      Alert.alert(
-        "Success",
-        "Trend submitted and points awarded!"
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [
-    user,
-    title,
-    category,
-    locationInput,
-    coords,
-    loadPoints,
-    loadLeaderboard,
-    fetchTrends,
-  ]);
-
-  // ---------- SAVE PROFILE (NAME + AVATAR) ----------
-  const handleSaveProfile = useCallback(
-    async (params: {
-      displayName: string;
-      avatarUrl: string | null;
-    }) => {
-      if (!user) throw new Error("Not logged in");
-
-      let finalAvatarUrl: string | null =
-        profile?.avatar_url ?? null;
-
-      // If avatarUrl is a local file, convert and upload
-      if (params.avatarUrl && params.avatarUrl.startsWith("file")) {
-        try {
-          // 1) Re-encode to JPEG
-          const manipulated = await ImageManipulator.manipulateAsync(
-            params.avatarUrl,
-            [],
-            {
-              compress: 0.8,
-              format: ImageManipulator.SaveFormat.JPEG,
-            }
-          );
-
-          // 2) Read JPEG file
-          const file = await File.fromUriAsync(manipulated.uri);
-          const base64 = await file.readAsStringAsync({
-            encoding: "base64",
-          });
-
-          // 3) Base64 → bytes → Blob
-          const bytes = Buffer.from(base64, "base64");
-          const blob = new Blob([bytes], { type: "image/jpeg" });
-
-          // 4) Upload as jpg and get public URL
-          finalAvatarUrl = await uploadAvatarPublic(
-            user.id,
-            blob,
-            "jpg"
-          );
-
-          console.log("Uploaded avatar URL:", finalAvatarUrl);
-          Alert.alert(
-            "Debug",
-            `Uploaded avatar:\n${finalAvatarUrl}`
-          );
-        } catch (error: any) {
-          console.error("Upload failed", error);
-          Alert.alert(
-            "Upload failed",
-            error.message ?? "Unknown error"
-          );
-        }
-      }
-
-      await upsertMyProfile(user.id, {
-        display_name: params.displayName || null,
-        avatar_url: finalAvatarUrl,
+      setLeaderboardLoading(true);
+      const { data, error } = await supabase.rpc("top_leaderboard", {
+        limit_count: 10,
       });
 
-      const fresh = await getMyProfile(user.id);
-      setProfile(fresh);
+      if (error) throw error;
+      setLeaderboard((data ?? []) as LeaderboardRow[]);
+    } catch (e) {
+      console.error("loadLeaderboard error:", e);
+      Alert.alert("Error", "Failed to load leaderboard");
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  }, []);
+
+  const loadNearbyTrends = useCallback(async () => {
+    if (!currentLat || !currentLng) {
+      Alert.alert("Location", "Please get your location first.");
+      return;
+    }
+
+    const radius = parseFloat(radiusKm || "0");
+    if (!radius || radius <= 0) {
+      Alert.alert("Radius", "Please enter a valid radius in km.");
+      return;
+    }
+
+    try {
+      setTrendsLoading(true);
+      const { data, error } = await supabase.rpc("trends_within_radius", {
+        in_lat: currentLat,
+        in_lng: currentLng,
+        radius_km: radius,
+      });
+
+      if (error) throw error;
+      setTrends((data ?? []) as Trend[]);
+    } catch (e) {
+      console.error("loadNearbyTrends error:", e);
+      Alert.alert("Error", "Failed to load nearby trends");
+    } finally {
+      setTrendsLoading(false);
+    }
+  }, [currentLat, currentLng, radiusKm]);
+
+  // -----------------------
+  // Auth handlers
+  // -----------------------
+  const handleSignUp = useCallback(async () => {
+    try {
+      setAuthLoading(true);
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+      });
+      if (error) throw error;
+      Alert.alert("Success", "Check your email to confirm sign up.");
+    } catch (e: any) {
+      console.error("signUp error:", e);
+      Alert.alert("Sign up failed", e?.message ?? "Unknown error");
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [email, password]);
+
+  const handleSignIn = useCallback(async () => {
+    try {
+      setAuthLoading(true);
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) throw error;
+    } catch (e: any) {
+      console.error("signIn error:", e);
+      Alert.alert("Sign in failed", e?.message ?? "Unknown error");
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [email, password]);
+
+  const handleSignOut = useCallback(async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error("signOut error:", e);
+    }
+  }, []);
+
+  // -----------------------
+  // Location
+  // -----------------------
+  const handleGetLocation = useCallback(async () => {
+    try {
+      setLocationLoading(true);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission needed",
+          "Location permission is required to use nearby trends."
+        );
+        return;
+      }
+
+      const pos = await Location.getCurrentPositionAsync({});
+      setCurrentLat(pos.coords.latitude);
+      setCurrentLng(pos.coords.longitude);
+
+      // Reverse geocode for city display
+      const geocoded = await Location.reverseGeocodeAsync({
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+      });
+
+      if (geocoded && geocoded.length > 0) {
+        const first = geocoded[0];
+        const cityName =
+          first.city || first.subregion || first.region || "Unknown area";
+        setCurrentCity(cityName);
+        // If no manual location text, use this as fallback
+        if (!newLocationText) {
+          setNewLocationText(cityName);
+        }
+      }
+    } catch (e) {
+      console.error("handleGetLocation error:", e);
+      Alert.alert("Error", "Failed to get location");
+    } finally {
+      setLocationLoading(false);
+    }
+  }, [newLocationText]);
+
+  // -----------------------
+  // Trends: add
+  // -----------------------
+  const handleAddTrend = useCallback(async () => {
+    if (!session?.user) {
+      Alert.alert("Not logged in", "You need to log in to add a trend.");
+      return;
+    }
+
+    if (!newTitle.trim()) {
+      Alert.alert("Missing title", "Please enter a trend title.");
+      return;
+    }
+
+    try {
+      setTrendsLoading(true);
+
+      const baseLocation = newLocationText.trim()
+        ? newLocationText.trim()
+        : currentCity || "Unknown";
+
+      const insertPayload: any = {
+        title: newTitle.trim(),
+        category: newCategory.trim(),
+        location: baseLocation,
+        user_id: session.user.id,
+      };
+
+      if (currentLat && currentLng) {
+        insertPayload.lat = currentLat;
+        insertPayload.lng = currentLng;
+      }
+
+      const { error: insertError } = await supabase
+        .from("trends")
+        .insert([insertPayload]);
+
+      if (insertError) throw insertError;
+
+      // Increment points via RPC
+      const { error: rpcError } = await supabase.rpc("increment_points", {
+        user_id_input: session.user.id,
+        amount: 10,
+      });
+
+      if (rpcError) {
+        console.warn("increment_points RPC error:", rpcError.message);
+      }
+
+      // Refresh after insert
+      await Promise.all([loadTrends(), loadProfile(session.user.id)]);
+
+      setNewTitle("");
+      // Keep category & location as is
+    } catch (e: any) {
+      console.error("handleAddTrend error:", e);
+      Alert.alert("Error", e?.message ?? "Failed to add trend");
+    } finally {
+      setTrendsLoading(false);
+    }
+  }, [
+    session,
+    newTitle,
+    newCategory,
+    newLocationText,
+    currentLat,
+    currentLng,
+    currentCity,
+    loadTrends,
+    loadProfile,
+  ]);
+
+  // -----------------------
+  // Profile save (AVATAR!)
+  // -----------------------
+  const handleSaveProfile = useCallback(
+    async ({ displayName, avatarUrl }: SaveProfileParams) => {
+      if (!session?.user) return;
+      const userId = session.user.id;
+
+      try {
+        let finalAvatarUrl: string | null = null;
+
+        if (avatarUrl && avatarUrl.startsWith("file:")) {
+          // Local URI → ArrayBuffer → Upload → public URL
+          const response = await fetch(avatarUrl);
+          const arrayBuffer = await response.arrayBuffer();
+          finalAvatarUrl = await uploadAvatarPublic(userId, arrayBuffer as ArrayBuffer, "jpg");
+        } else {
+          // Already a remote URL (e.g. Supabase public URL)
+          finalAvatarUrl = avatarUrl;
+        }
+
+        await upsertMyProfile(userId, {
+          display_name: displayName,
+          avatar_url: finalAvatarUrl,
+        });
+
+        await loadProfile(userId);
+      } catch (e: any) {
+        console.error("handleSaveProfile error:", e);
+        Alert.alert("Update failed", e?.message ?? "Unknown error");
+        throw e;
+      }
     },
-    [user, profile]
+    [session, loadProfile]
   );
 
-  // ---------- RENDER ----------
+  // -----------------------
+  // UI helpers
+  // -----------------------
+  const renderTrendItem = ({ item }: { item: Trend }) => (
+    <View style={[styles.trendCard, { borderColor: colors.border }]}>
+      <Text style={[styles.trendTitle, { color: colors.text }]}>
+        {item.title}
+      </Text>
+      <Text style={{ color: colors.sub, marginBottom: 2 }}>
+        {item.category} · {item.location}
+      </Text>
+      {typeof item.distance_km === "number" && (
+        <Text style={{ color: colors.sub }}>
+          ~{item.distance_km.toFixed(1)} km away
+        </Text>
+      )}
+      <Text style={{ color: colors.sub, marginTop: 4, fontSize: 12 }}>
+        {new Date(item.created_at).toLocaleString()}
+      </Text>
+    </View>
+  );
 
-  return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: colors.bg,
-        paddingHorizontal: 16,
-        paddingTop: 16,
-      }}
-    >
-      <FlatList
-        data={data}
-        keyExtractor={(item) => item.id}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
+  const renderLeaderboardItem = ({ item }: { item: LeaderboardRow }) => (
+    <View style={[styles.lbRow, { borderColor: colors.border }]}>
+      <View>
+        <Text style={{ color: colors.text, fontWeight: "600" }}>
+          {item.display_name || "Anonymous"}
+        </Text>
+        <Text style={{ color: colors.sub, fontSize: 12 }}>{item.id}</Text>
+      </View>
+      <Text style={{ color: colors.text, fontWeight: "700" }}>
+        {item.points} pts
+      </Text>
+    </View>
+  );
+
+  if (initialLoading) {
+    return (
+      <View style={[styles.screen, { justifyContent: "center" }]}>
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  // -----------------------
+  // Not logged in: show auth
+  // -----------------------
+  if (!session) {
+    return (
+      <View style={styles.screen}>
+        <Text style={[styles.title, { color: colors.text }]}>
+          Locova
+        </Text>
+        <Text style={[styles.subtitle, { color: colors.sub }]}>
+          Discover & share local trends
+        </Text>
+
+        <View
+          style={[styles.card, { borderColor: colors.border }]}
+        >
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
+            {isLoginMode ? "Log In" : "Sign Up"}
+          </Text>
+          <TextInput
+            style={[
+              styles.input,
+              { borderColor: colors.border, color: colors.text },
+            ]}
+            placeholder="Email"
+            placeholderTextColor={colors.sub}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
           />
-        }
-        ListHeaderComponent={
-          <View>
-            <Text
-              style={{
-                color: colors.text,
-                fontSize: 24,
-                fontWeight: "800",
-                marginBottom: 8,
-              }}
-            >
-              Locova Trends 🌍
-            </Text>
+          <TextInput
+            style={[
+              styles.input,
+              { borderColor: colors.border, color: colors.text },
+            ]}
+            placeholder="Password"
+            placeholderTextColor={colors.sub}
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
 
-            {/* Greeting with avatar */}
-            {user && (
-              <View style={styles.row}>
-                {profile?.avatar_url ? (
-                  <Image
-                    source={{
-                      uri: `${profile.avatar_url}?v=${Date.now()}`,
-                    }}
-                    style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 18,
-                      marginRight: 8,
-                    }}
-                  />
-                ) : null}
-                <View>
-                  <Text
-                    style={{ color: colors.text, fontSize: 16 }}
-                  >
-                    Welcome,{" "}
-                    <Text style={{ fontWeight: "700" }}>
-                      {profile?.display_name || user.email}
-                    </Text>
-                  </Text>
-                  {points !== null && (
-                    <Text
-                      style={{
-                        color: colors.sub,
-                        fontSize: 14,
-                        marginTop: 2,
-                      }}
-                    >
-                      🏆 Your Points: {points}
-                    </Text>
-                  )}
-                </View>
-              </View>
-            )}
-
-            {/* Location info */}
-            {locating ? (
-              <Text
-                style={{
-                  color: colors.sub,
-                  marginTop: 8,
-                  marginBottom: 4,
-                }}
-              >
-                📍 Detecting your location…
-              </Text>
-            ) : userLocation ? (
-              <View style={styles.row}>
-                <Text style={{ color: colors.text }}>
-                  📍 Showing trends near{" "}
-                  <Text style={{ fontWeight: "700" }}>
-                    {userLocation}
-                  </Text>
-                </Text>
-                <Pressable
-                  onPress={async () => {
-                    try {
-                      setLocating(true);
-                      const { status } =
-                        await Location.requestForegroundPermissionsAsync();
-                      if (status !== "granted") return;
-                      const pos =
-                        await Location.getCurrentPositionAsync({
-                          accuracy:
-                            Location.Accuracy.Balanced,
-                        });
-                      setCoords({
-                        lat: pos.coords.latitude,
-                        lng: pos.coords.longitude,
-                      });
-                      const places =
-                        await Location.reverseGeocodeAsync(
-                          pos.coords
-                        );
-                      const best =
-                        places[0]?.city ||
-                        places[0]?.subregion ||
-                        places[0]?.region ||
-                        places[0]?.district ||
-                        null;
-                      setUserLocation(best);
-                    } finally {
-                      setLocating(false);
-                    }
-                  }}
-                  style={[
-                    styles.chip,
-                    { borderColor: colors.border },
-                  ]}
-                >
-                  <Text style={{ color: colors.text }}>
-                    Use GPS again
-                  </Text>
-                </Pressable>
-              </View>
+          <Pressable
+            onPress={isLoginMode ? handleSignIn : handleSignUp}
+            style={[
+              styles.button,
+              { backgroundColor: colors.buttonBg, marginTop: 8 },
+            ]}
+            disabled={authLoading}
+          >
+            {authLoading ? (
+              <ActivityIndicator color={colors.buttonText} />
             ) : (
               <Text
-                style={{
-                  color: colors.sub,
-                  marginTop: 8,
-                  marginBottom: 4,
-                }}
+                style={[
+                  styles.buttonText,
+                  { color: colors.buttonText },
+                ]}
               >
-                📍 Location off. Turn it on to see nearby trends
-                (or type a city in “Location” when submitting).
+                {isLoginMode ? "Log In" : "Create Account"}
               </Text>
             )}
+          </Pressable>
 
-            {/* Radius input */}
-            <View style={[styles.row, { marginTop: 8 }]}>
-              <Text style={{ color: colors.text, marginRight: 8 }}>
-                Radius (km):
-              </Text>
-              <TextInput
-                style={[
-                  styles.input,
-                ]}
-                keyboardType="numeric"
-                placeholder="20"
-                placeholderTextColor={colors.sub}
-                value={String(radiusKm)}
-                onChangeText={(v) => {
-                  const n = Number(v);
-                  if (!isNaN(n)) setRadiusKm(n);
-                }}
-              />
-            </View>
+          <Pressable
+            onPress={() => setIsLoginMode((m) => !m)}
+            style={{ marginTop: 12 }}
+          >
+            <Text style={{ color: colors.sub, fontSize: 13 }}>
+              {isLoginMode
+                ? "Need an account? Sign up"
+                : "Already have an account? Log in"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
-            {/* AUTH BOX */}
-            <View
-              style={[
-                styles.card,
-                { borderColor: colors.cardBorder },
-              ]}
-            >
-              {!user ? (
-                <>
-                  <Text
-                    style={[
-                      styles.h2,
-                      { color: colors.text, marginBottom: 8 },
-                    ]}
-                  >
-                    Login or Sign Up
-                  </Text>
+  // -----------------------
+  // Logged in UI
+  // -----------------------
+  const userPoints = profile?.points ?? 0;
 
-                  <TextInput
-                    style={[
-                      styles.input,
-                      {
-                        borderColor: colors.border,
-                        color: colors.text,
-                      },
-                    ]}
-                    placeholder="Email"
-                    keyboardType="email-address"
-                    placeholderTextColor={colors.sub}
-                    value={email}
-                    onChangeText={setEmail}
-                  />
-                  <TextInput
-                    style={[
-                      styles.input,
-                      {
-                        borderColor: colors.border,
-                        color: colors.text,
-                      },
-                    ]}
-                    placeholder="Password"
-                    secureTextEntry
-                    placeholderTextColor={colors.sub}
-                    value={password}
-                    onChangeText={setPassword}
-                  />
+  return (
+    <ScrollView
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      contentContainerStyle={styles.scrollContent}
+    >
+      <View style={styles.headerRow}>
+        <View>
+          <Text style={[styles.title, { color: colors.text }]}>
+            Locova
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.sub }]}>
+            Hey {profile?.display_name || "Explorer"} 👋
+          </Text>
+        </View>
 
-                  <Pressable
-                    onPress={handleSignUp}
-                    style={[
-                      styles.button,
-                      { backgroundColor: colors.buttonBg },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: colors.buttonText,
-                        fontWeight: "600",
-                      }}
-                    >
-                      Sign Up
-                    </Text>
-                  </Pressable>
-                  <View style={{ height: 8 }} />
-                  <Pressable
-                    onPress={handleLogin}
-                    style={[
-                      styles.button,
-                      { backgroundColor: colors.buttonBg },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: colors.buttonText,
-                        fontWeight: "600",
-                      }}
-                    >
-                      Login
-                    </Text>
-                  </Pressable>
-                </>
-              ) : (
-                <View style={styles.row}>
-                  <View>
-                    <Text
-                      style={{
-                        color: colors.text,
-                        fontWeight: "600",
-                      }}
-                    >
-                      Welcome, {user.email}
-                    </Text>
-                    {points !== null && (
-                      <Text
-                        style={{
-                          color: colors.sub,
-                          marginTop: 2,
-                        }}
-                      >
-                        🏆 Your Points: {points}
-                      </Text>
-                    )}
-                  </View>
-                  <Pressable
-                    onPress={handleLogout}
-                    style={[
-                      styles.button,
-                      {
-                        backgroundColor: colors.danger,
-                        marginLeft: "auto",
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={{
-                        color: "#fff",
-                        fontWeight: "600",
-                      }}
-                    >
-                      Logout
-                    </Text>
-                  </Pressable>
-                </View>
-              )}
-            </View>
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={{ color: colors.sub, fontSize: 12 }}>
+            Points
+          </Text>
+          <Text
+            style={{
+              color: colors.text,
+              fontSize: 18,
+              fontWeight: "700",
+            }}
+          >
+            {userPoints}
+          </Text>
 
-            {/* PROFILE EDITOR */}
-            {user && (
-              <ProfileEditor
-                colors={colors}
-                userId={user.id}
-                initialDisplayName={profile?.display_name || ""}
-                initialAvatarUrl={profile?.avatar_url || null}
-                onSave={handleSaveProfile}
-              />
-            )}
-
-            {/* TREND FORM */}
-            <View
-              style={[
-                styles.card,
-                { borderColor: colors.cardBorder },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.h2,
-                  { color: colors.text, marginBottom: 8 },
-                ]}
-              >
-                Submit a New Trend
-              </Text>
-
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    borderColor: colors.border,
-                    color: colors.text,
-                  },
-                ]}
-                placeholder="Title"
-                placeholderTextColor={colors.sub}
-                value={title}
-                onChangeText={setTitle}
-              />
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    borderColor: colors.border,
-                    color: colors.text,
-                  },
-                ]}
-                placeholder="Category (Food, Event, Place…)"
-                placeholderTextColor={colors.sub}
-                value={category}
-                onChangeText={setCategory}
-              />
-              <TextInput
-                style={[
-                  styles.input,
-                  {
-                    borderColor: colors.border,
-                    color: colors.text,
-                  },
-                ]}
-                placeholder="Location (city, e.g., Boston)"
-                placeholderTextColor={colors.sub}
-                value={locationInput}
-                onChangeText={setLocationInput}
-              />
-
-              <Pressable
-                onPress={handleSubmitTrend}
-                style={[
-                  styles.button,
-                  { backgroundColor: colors.buttonBg },
-                ]}
-              >
-                {loading ? (
-                  <ActivityIndicator color={colors.buttonText} />
-                ) : (
-                  <Text
-                    style={{
-                      color: colors.buttonText,
-                      fontWeight: "600",
-                    }}
-                  >
-                    Submit Trend
-                  </Text>
-                )}
-              </Pressable>
-            </View>
-
-            {/* LEADERBOARD HEADER */}
+          <Pressable
+            onPress={handleSignOut}
+            style={[
+              styles.button,
+              {
+                backgroundColor: "#111827",
+                paddingVertical: 6,
+                paddingHorizontal: 10,
+                marginTop: 6,
+              },
+            ]}
+          >
             <Text
               style={[
-                styles.h2,
-                {
-                  color: colors.text,
-                  marginTop: 16,
-                  marginBottom: 4,
-                },
+                styles.buttonText,
+                { color: colors.sub, fontSize: 12 },
               ]}
             >
-              🏆 Leaderboard
+              Log out
             </Text>
-            {lbLoading ? (
-              <Text style={{ color: colors.sub }}>
-                Loading leaderboard…
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Profile */}
+      <View
+        style={[styles.card, { borderColor: colors.border }]}
+      >
+        <ProfileEditor
+          colors={colors}
+          userId={session.user.id}
+          initialDisplayName={profile?.display_name ?? ""}
+          initialAvatarUrl={profile?.avatar_url ?? null}
+          onSave={handleSaveProfile}
+        />
+
+        {profileLoading && (
+          <ActivityIndicator color={colors.sub} size="small" />
+        )}
+      </View>
+
+      {/* Location & radius */}
+      <View
+        style={[styles.card, { borderColor: colors.border }]}
+      >
+        <Text
+          style={[styles.sectionTitle, { color: colors.text }]}
+        >
+          📍 Location & Radius
+        </Text>
+        <Text style={{ color: colors.sub, marginBottom: 8 }}>
+          {currentCity
+            ? `Using location: ${currentCity}`
+            : "No location yet"}
+        </Text>
+
+        <View style={styles.row}>
+          <Pressable
+            onPress={handleGetLocation}
+            disabled={locationLoading}
+            style={[
+              styles.button,
+              {
+                backgroundColor: colors.buttonBg,
+                marginRight: 8,
+                flex: 1,
+              },
+            ]}
+          >
+            {locationLoading ? (
+              <ActivityIndicator color={colors.buttonText} />
+            ) : (
+              <Text
+                style={[
+                  styles.buttonText,
+                  { color: colors.buttonText },
+                ]}
+              >
+                Use my location
               </Text>
-            ) : leaderboard.length === 0 ? (
-              <Text style={{ color: colors.sub }}>
-                No rankings yet.
-              </Text>
-            ) : null}
-          </View>
-        }
-        renderItem={({ item }) => {
-          // Trend card
-          return (
-            <View
+            )}
+          </Pressable>
+
+          <TextInput
+            style={[
+              styles.inputSmall,
+              { borderColor: colors.border, color: colors.text },
+            ]}
+            placeholder="Radius km"
+            placeholderTextColor={colors.sub}
+            keyboardType="numeric"
+            value={radiusKm}
+            onChangeText={setRadiusKm}
+          />
+        </View>
+
+        <Pressable
+          onPress={loadNearbyTrends}
+          style={[
+            styles.button,
+            { backgroundColor: "#111827", marginTop: 8 },
+          ]}
+        >
+          <Text
+            style={[
+              styles.buttonText,
+              { color: colors.buttonText },
+            ]}
+          >
+            Load trends within radius
+          </Text>
+        </Pressable>
+      </View>
+
+      {/* Add Trend */}
+      <View
+        style={[styles.card, { borderColor: colors.border }]}
+      >
+        <Text
+          style={[styles.sectionTitle, { color: colors.text }]}
+        >
+          ➕ Add a Trend
+        </Text>
+
+        <TextInput
+          style={[
+            styles.input,
+            { borderColor: colors.border, color: colors.text },
+          ]}
+          placeholder="What's trending? (e.g. New ramen spot)"
+          placeholderTextColor={colors.sub}
+          value={newTitle}
+          onChangeText={setNewTitle}
+        />
+
+        <TextInput
+          style={[
+            styles.input,
+            { borderColor: colors.border, color: colors.text },
+          ]}
+          placeholder='Category (e.g. "Food", "Event")'
+          placeholderTextColor={colors.sub}
+          value={newCategory}
+          onChangeText={setNewCategory}
+        />
+
+        <TextInput
+          style={[
+            styles.input,
+            { borderColor: colors.border, color: colors.text },
+          ]}
+          placeholder="Location name (optional, e.g. Downtown)"
+          placeholderTextColor={colors.sub}
+          value={newLocationText}
+          onChangeText={setNewLocationText}
+        />
+
+        <Pressable
+          onPress={handleAddTrend}
+          disabled={trendsLoading}
+          style={[
+            styles.button,
+            {
+              backgroundColor: colors.buttonBg,
+              marginTop: 6,
+            },
+          ]}
+        >
+          {trendsLoading ? (
+            <ActivityIndicator color={colors.buttonText} />
+          ) : (
+            <Text
               style={[
-                styles.card,
-                {
-                  borderColor: colors.cardBorder,
-                  marginTop: 8,
-                },
+                styles.buttonText,
+                { color: colors.buttonText },
               ]}
             >
-              <Text
-                style={{
-                  color: colors.text,
-                  fontWeight: "600",
-                  marginBottom: 2,
-                }}
-              >
-                {item.title}
-              </Text>
-              <Text style={{ color: colors.sub }}>
-                {item.category} • {item.location}
-              </Text>
-              <Text
-                style={{
-                  color: colors.sub,
-                  fontSize: 12,
-                  marginTop: 4,
-                }}
-              >
-                {new Date(
-                  item.created_at
-                ).toLocaleString()}
-              </Text>
-            </View>
-          );
-        }}
-        ListFooterComponent={
-          <View style={{ marginTop: 16, marginBottom: 32 }}>
-            {leaderboard.length > 0 && (
-              <FlatList
-                data={leaderboard}
-                keyExtractor={(row) => row.id}
-                scrollEnabled={false}
-                renderItem={({ item, index }) => {
-                  const isYou = user?.id === item.id;
-                  const name =
-                    item.display_name ??
-                    (isYou ? "You" : item.id.slice(0, 6) + "…");
-                  return (
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 12,
-                        padding: 12,
-                        borderWidth: 1,
-                        borderColor: colors.cardBorder,
-                        borderRadius: 12,
-                        backgroundColor: isYou
-                          ? "#0ea5e922"
-                          : colors.cardBg,
-                        marginBottom: 8,
-                      }}
-                    >
-                      <Text
-                        style={{
-                          color: colors.text,
-                          fontWeight: "800",
-                          width: 28,
-                          textAlign: "right",
-                        }}
-                      >
-                        #{index + 1}
-                      </Text>
-                      <View style={{ flex: 1 }}>
-                        <Text
-                          style={{
-                            color: colors.text,
-                            fontWeight: "600",
-                          }}
-                        >
-                          {name}
-                        </Text>
-                        <Text
-                          style={{
-                            color: colors.sub,
-                            fontSize: 12,
-                          }}
-                        >
-                          {item.id.slice(0, 8)}…
-                        </Text>
-                      </View>
-                      <Text
-                        style={{
-                          color: colors.text,
-                          fontWeight: "700",
-                        }}
-                      >
-                        {item.points} pts
-                      </Text>
-                    </View>
-                  );
-                }}
-              />
-            )}
-          </View>
-        }
-      />
-    </View>
+              Post Trend & Earn Points
+            </Text>
+          )}
+        </Pressable>
+      </View>
+
+      {/* Trends List */}
+      <View
+        style={[styles.card, { borderColor: colors.border }]}
+      >
+        <Text
+          style={[styles.sectionTitle, { color: colors.text }]}
+        >
+          🔥 Trends
+        </Text>
+        {trendsLoading && (
+          <ActivityIndicator color={colors.sub} size="small" />
+        )}
+        {trends.length === 0 && !trendsLoading ? (
+          <Text style={{ color: colors.sub, marginTop: 8 }}>
+            No trends yet. Be the first to add one!
+          </Text>
+        ) : (
+          <FlatList
+            data={trends}
+            keyExtractor={(item) => item.id}
+            renderItem={renderTrendItem}
+            scrollEnabled={false}
+            contentContainerStyle={{ paddingTop: 8 }}
+          />
+        )}
+      </View>
+
+      {/* Leaderboard */}
+      <View
+        style={[styles.card, { borderColor: colors.border }]}
+      >
+        <View style={styles.rowBetween}>
+          <Text
+            style={[styles.sectionTitle, { color: colors.text }]}
+          >
+            🏆 Leaderboard
+          </Text>
+          <Pressable
+            onPress={loadLeaderboard}
+            style={[
+              styles.button,
+              {
+                backgroundColor: "#111827",
+                paddingVertical: 4,
+                paddingHorizontal: 10,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.buttonText,
+                { color: colors.sub, fontSize: 12 },
+              ]}
+            >
+              Refresh
+            </Text>
+          </Pressable>
+        </View>
+
+        {leaderboardLoading && (
+          <ActivityIndicator color={colors.sub} size="small" />
+        )}
+
+        {leaderboard.length === 0 && !leaderboardLoading ? (
+          <Text style={{ color: colors.sub, marginTop: 8 }}>
+            No one on the board yet. Start posting trends!
+          </Text>
+        ) : (
+          <FlatList
+            data={leaderboard}
+            keyExtractor={(item) => item.id}
+            renderItem={renderLeaderboardItem}
+            scrollEnabled={false}
+            contentContainerStyle={{ paddingTop: 8 }}
+          />
+        )}
+      </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
+  screen: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    paddingHorizontal: 16,
+    paddingTop: 60,
   },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    marginLeft: 8,
+  scrollContent: {
+    paddingHorizontal: 16,
+    paddingTop: 60,
+    paddingBottom: 40,
+  },
+  title: {
+    fontSize: 28,
+    fontWeight: "800",
+  },
+  subtitle: {
+    fontSize: 14,
+    marginTop: 4,
+  },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 16,
   },
   card: {
-    padding: 12,
     borderWidth: 1,
-    borderRadius: 12,
-    marginTop: 12,
-    backgroundColor: "transparent",
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 14,
+    backgroundColor: colors.cardBg,
   },
-  h2: {
+  sectionTitle: {
     fontSize: 18,
     fontWeight: "700",
+    marginBottom: 6,
   },
   input: {
     borderWidth: 1,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 10,
-    flex: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  inputSmall: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    width: 90,
   },
   button: {
-    paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
+  },
+  buttonText: {
+    fontWeight: "700",
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+  },
+  rowBetween: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  trendCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+  },
+  trendTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    marginBottom: 2,
+  },
+  lbRow: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 8,
+    marginBottom: 6,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
 });
