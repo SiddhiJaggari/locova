@@ -1,6 +1,6 @@
 // services/profile.ts
 import { supabase } from "../lib/supabase";
-import { UserProfile } from "../types";
+import { UserProfile } from "../type";
 
 export async function getMyProfile(
   userId: string

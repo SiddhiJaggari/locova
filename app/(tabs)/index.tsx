@@ -21,7 +21,7 @@ import {
   uploadAvatarPublic,
   upsertMyProfile,
 } from "../../services/profile";
-import { LeaderboardRow, Trend, UserProfile } from "../../types";
+import { LeaderboardRow, Trend, UserProfile } from "../../type";
 
 const colors = {
   bg: "#050816",
@@ -422,7 +422,6 @@ export default function HomeScreen() {
         <Text style={{ color: colors.text, fontWeight: "600" }}>
           {item.display_name || "Anonymous"}
         </Text>
-        <Text style={{ color: colors.sub, fontSize: 12 }}>{item.id}</Text>
       </View>
       <Text style={{ color: colors.text, fontWeight: "700" }}>
         {item.points} pts
