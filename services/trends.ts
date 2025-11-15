@@ -1,6 +1,6 @@
 // services/trends.ts
 import { supabase } from "../lib/supabase";
-import { Trend } from "../types";
+import { Trend, TrendComment } from "../type";
 
 export async function fetchTrendsUnified(
   coords: { lat: number; lng: number } | null,
@@ -30,4 +30,136 @@ export function subscribeTrends(onChange: () => void) {
     .on("postgres_changes", { event: "*", schema: "public", table: "trends" }, onChange)
     .subscribe();
   return () => supabase.removeChannel(channel);
+}
+
+export async function toggleTrendLike(trendId: string, userId: string): Promise<"liked" | "unliked"> {
+  const { data: existing, error: fetchError } = await supabase
+    .from("trend_likes")
+    .select("id")
+    .eq("trend_id", trendId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fetchError) throw fetchError;
+
+  if (existing) {
+    const { error } = await supabase.from("trend_likes").delete().eq("id", existing.id);
+    if (error) throw error;
+    return "unliked";
+  }
+
+  const { error } = await supabase.from("trend_likes").insert({ trend_id: trendId, user_id: userId });
+  if (error) throw error;
+  return "liked";
+}
+
+export async function fetchTrendEngagement(
+  trendIds: string[],
+  currentUserId: string | null
+): Promise<{
+  likeCounts: Record<string, number>;
+  commentCounts: Record<string, number>;
+  likedTrendIds: string[];
+}> {
+  if (trendIds.length === 0) {
+    return { likeCounts: {}, commentCounts: {}, likedTrendIds: [] };
+  }
+
+  const [likes, comments] = await Promise.all([
+    supabase.from("trend_likes").select("trend_id,user_id").in("trend_id", trendIds),
+    supabase.from("trend_comments").select("trend_id").in("trend_id", trendIds),
+  ]);
+
+  if (likes.error) throw likes.error;
+  if (comments.error) throw comments.error;
+
+  const likeCounts: Record<string, number> = {};
+  const likedSet = new Set<string>();
+  const commentCounts: Record<string, number> = {};
+
+  likes.data?.forEach((row) => {
+    likeCounts[row.trend_id] = (likeCounts[row.trend_id] ?? 0) + 1;
+    if (currentUserId && row.user_id === currentUserId) {
+      likedSet.add(row.trend_id);
+    }
+  });
+
+  comments.data?.forEach((row) => {
+    commentCounts[row.trend_id] = (commentCounts[row.trend_id] ?? 0) + 1;
+  });
+
+  return {
+    likeCounts,
+    commentCounts,
+    likedTrendIds: Array.from(likedSet),
+  };
+}
+
+export async function fetchTrendComments(trendId: string): Promise<TrendComment[]> {
+  const { data, error } = await supabase
+    .from("trend_comments")
+    .select("*")
+    .eq("trend_id", trendId)
+    .order("created_at", { ascending: true });
+  if (error) throw error;
+  return (data as TrendComment[]) ?? [];
+}
+
+export async function submitTrendComment(trendId: string, userId: string, comment: string): Promise<TrendComment> {
+  const { data, error } = await supabase
+    .from("trend_comments")
+    .insert({ trend_id: trendId, user_id: userId, comment })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as TrendComment;
+}
+
+export async function toggleCommentLike(commentId: string, userId: string): Promise<"liked" | "unliked"> {
+  const { data: existing, error: fetchError } = await supabase
+    .from("trend_comment_likes")
+    .select("id")
+    .eq("comment_id", commentId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fetchError) throw fetchError;
+
+  if (existing) {
+    const { error } = await supabase.from("trend_comment_likes").delete().eq("id", existing.id);
+    if (error) throw error;
+    return "unliked";
+  }
+
+  const { error } = await supabase.from("trend_comment_likes").insert({ comment_id: commentId, user_id: userId });
+  if (error) throw error;
+  return "liked";
+}
+
+export async function fetchCommentEngagement(
+  commentIds: string[],
+  currentUserId: string | null
+): Promise<{ likeCounts: Record<string, number>; likedCommentIds: string[] }> {
+  if (commentIds.length === 0) {
+    return { likeCounts: {}, likedCommentIds: [] };
+  }
+
+  const { data, error } = await supabase
+    .from("trend_comment_likes")
+    .select("comment_id,user_id")
+    .in("comment_id", commentIds);
+
+  if (error) throw error;
+
+  const likeCounts: Record<string, number> = {};
+  const likedSet = new Set<string>();
+
+  data?.forEach((row) => {
+    likeCounts[row.comment_id] = (likeCounts[row.comment_id] ?? 0) + 1;
+    if (currentUserId && row.user_id === currentUserId) {
+      likedSet.add(row.comment_id);
+    }
+  });
+
+  return { likeCounts, likedCommentIds: Array.from(likedSet) };
 }

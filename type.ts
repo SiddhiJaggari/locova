@@ -15,6 +15,11 @@ export type Trend = {
 
   // Present only when using the `trends_within_radius` RPC
   distance_km?: number;
+
+  // Day 10 engagement metadata
+  like_count?: number;
+  comment_count?: number;
+  liked_by_current_user?: boolean;
 };
 
 // A row from `user_profiles`
@@ -33,4 +38,14 @@ export type LeaderboardRow = {
   points: number;
   display_name?: string | null;
   avatar_url?: string | null;
+};
+
+export type TrendComment = {
+  id: string;
+  trend_id: string;
+  user_id: string;
+  comment: string;
+  created_at: string;
+  like_count?: number;
+  liked_by_current_user?: boolean;
 };

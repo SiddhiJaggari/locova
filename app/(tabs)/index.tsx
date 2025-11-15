@@ -1,14 +1,16 @@
 // app/(tabs)/index.tsx
 import { Session } from "@supabase/supabase-js";
+import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   FlatList,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -25,7 +27,15 @@ import {
   uploadAvatarPublic,
   upsertMyProfile
 } from "../../services/profile";
-import { LeaderboardRow, Trend, UserProfile } from "../../type";
+import {
+  fetchCommentEngagement,
+  fetchTrendComments,
+  fetchTrendEngagement,
+  submitTrendComment,
+  toggleCommentLike,
+  toggleTrendLike
+} from "../../services/trends";
+import { LeaderboardRow, Trend, TrendComment, UserProfile } from "../../type";
 
 // Configure notification handler
 Notifications.setNotificationHandler({
@@ -42,6 +52,11 @@ Notifications.setNotificationHandler({
  * Request notification permissions and get the Expo push token
  */
 async function registerForPushNotificationsAsync(): Promise<string | null> {
+  if (Constants.appOwnership === "expo") {
+    console.warn("Push notifications aren't available in Expo Go. Skipping token registration.");
+    return null;
+  }
+
   if (!Device.isDevice) {
     console.warn("Push notifications only work on physical devices");
     return null;
@@ -119,6 +134,73 @@ export default function HomeScreen() {
 
   // Global loading (initial)
   const [initialLoading, setInitialLoading] = useState(true);
+
+  // Trend engagement
+  const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
+  const [likedTrendIds, setLikedTrendIds] = useState<string[]>([]);
+  const [commentsVisible, setCommentsVisible] = useState(false);
+  const [activeCommentTrendId, setActiveCommentTrendId] = useState<string | null>(null);
+  const [trendComments, setTrendComments] = useState<TrendComment[]>([]);
+  const [trendCommentsLoading, setTrendCommentsLoading] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const [commentLikeCounts, setCommentLikeCounts] = useState<Record<string, number>>({});
+  const [likedCommentIds, setLikedCommentIds] = useState<string[]>([]);
+
+  const currentUserId = session?.user?.id ?? null;
+  const activeTrend = useMemo(
+    () => trends.find((t) => t.id === activeCommentTrendId) ?? null,
+    [trends, activeCommentTrendId]
+  );
+
+  const fetchEngagementSnapshot = useCallback(
+    async (trendIds: string[]) => {
+      if (trendIds.length === 0) {
+        return {
+          likeCounts: {},
+          commentCounts: {},
+          likedTrendIds: [],
+        };
+      }
+
+      return await fetchTrendEngagement(trendIds, currentUserId ?? null);
+    },
+    [currentUserId]
+  );
+
+  const applyEngagementSnapshot = useCallback(async () => {
+    try {
+      const snapshot = await fetchEngagementSnapshot(trends.map((t) => t.id));
+      setLikeCounts(snapshot.likeCounts);
+      setCommentCounts(snapshot.commentCounts);
+      setLikedTrendIds(snapshot.likedTrendIds);
+    } catch (error) {
+      console.error("fetchTrendEngagement error:", error);
+    }
+  }, [fetchEngagementSnapshot, trends]);
+
+  useEffect(() => {
+    let mounted = true;
+    const ids = trends.map((t) => t.id);
+
+    (async () => {
+      try {
+        const snapshot = await fetchEngagementSnapshot(ids);
+        if (!mounted) return;
+        setLikeCounts(snapshot.likeCounts);
+        setCommentCounts(snapshot.commentCounts);
+        setLikedTrendIds(snapshot.likedTrendIds);
+      } catch (error) {
+        if (!mounted) return;
+        console.error("fetchTrendEngagement error:", error);
+      }
+    })();
+
+    return () => {
+      mounted = false;
+    };
+  }, [trends, fetchEngagementSnapshot]);
 
   // -----------------------
   // Auth: Session listener
@@ -246,6 +328,149 @@ export default function HomeScreen() {
       setTrendsLoading(false);
     }
   }, [currentLat, currentLng, radiusKm]);
+
+  // -----------------------
+  // Trend engagement actions
+  // -----------------------
+  const handleToggleLike = useCallback(
+    async (trendId: string) => {
+      if (!session?.user) {
+        Alert.alert("Log in", "You need an account to like a trend.");
+        return;
+      }
+
+      try {
+        const result = await toggleTrendLike(trendId, session.user.id);
+        if (result === "liked") {
+          try {
+            await supabase.rpc("increment_points", {
+              user_id_input: session.user.id,
+              amount: 2,
+            });
+            await loadProfile(session.user.id);
+          } catch (rpcError) {
+            console.warn("increment_points like bonus failed:", rpcError);
+          }
+        }
+        await applyEngagementSnapshot();
+      } catch (error: any) {
+        console.error("toggleTrendLike error:", error);
+        Alert.alert("Error", error?.message ?? "Failed to update like");
+      }
+    },
+    [session, applyEngagementSnapshot, loadProfile]
+  );
+
+  const loadTrendComments = useCallback(async (trendId: string) => {
+    try {
+      setTrendCommentsLoading(true);
+      const data = await fetchTrendComments(trendId);
+      setTrendComments(data);
+
+      const ids = data.map((comment) => comment.id);
+      if (ids.length === 0) {
+        setCommentLikeCounts({});
+        setLikedCommentIds([]);
+      } else {
+        const engagement = await fetchCommentEngagement(ids, currentUserId ?? null);
+        setCommentLikeCounts(engagement.likeCounts);
+        setLikedCommentIds(engagement.likedCommentIds);
+      }
+    } catch (error) {
+      console.error("fetchTrendComments error:", error);
+      Alert.alert("Error", "Failed to load comments");
+    } finally {
+      setTrendCommentsLoading(false);
+    }
+  }, [currentUserId]);
+
+  const handleOpenComments = useCallback(
+    (trendId: string) => {
+      setActiveCommentTrendId(trendId);
+      setCommentsVisible(true);
+      setTrendComments([]);
+      setNewComment("");
+      loadTrendComments(trendId);
+    },
+    [loadTrendComments]
+  );
+
+  const handleCloseComments = useCallback(() => {
+    setCommentsVisible(false);
+    setActiveCommentTrendId(null);
+    setTrendComments([]);
+    setNewComment("");
+    setCommentLikeCounts({});
+    setLikedCommentIds([]);
+  }, []);
+
+  const handleSubmitComment = useCallback(async () => {
+    if (!session?.user) {
+      Alert.alert("Log in", "You need an account to comment.");
+      return;
+    }
+
+    if (!activeCommentTrendId) {
+      return;
+    }
+
+    if (!newComment.trim()) {
+      Alert.alert("Empty comment", "Please write something before posting.");
+      return;
+    }
+
+    try {
+      setPostingComment(true);
+      await submitTrendComment(activeCommentTrendId, session.user.id, newComment.trim());
+      try {
+        await supabase.rpc("increment_points", {
+          user_id_input: session.user.id,
+          amount: 5,
+        });
+        await loadProfile(session.user.id);
+      } catch (rpcError) {
+        console.warn("increment_points comment bonus failed:", rpcError);
+      }
+      setNewComment("");
+      await Promise.all([loadTrendComments(activeCommentTrendId), applyEngagementSnapshot()]);
+    } catch (error: any) {
+      console.error("submitTrendComment error:", error);
+      Alert.alert("Error", error?.message ?? "Failed to post comment");
+    } finally {
+      setPostingComment(false);
+    }
+  }, [session, activeCommentTrendId, newComment, loadTrendComments, applyEngagementSnapshot, loadProfile]);
+
+  const handleToggleCommentLike = useCallback(
+    async (commentId: string) => {
+      if (!session?.user) {
+        Alert.alert("Log in", "You need an account to like a comment.");
+        return;
+      }
+
+      try {
+        const result = await toggleCommentLike(commentId, session.user.id);
+        if (result === "liked") {
+          try {
+            await supabase.rpc("increment_points", {
+              user_id_input: session.user.id,
+              amount: 2,
+            });
+            await loadProfile(session.user.id);
+          } catch (rpcError) {
+            console.warn("increment_points comment-like bonus failed:", rpcError);
+          }
+        }
+        if (activeCommentTrendId) {
+          await loadTrendComments(activeCommentTrendId);
+        }
+      } catch (error: any) {
+        console.error("toggleCommentLike error:", error);
+        Alert.alert("Error", error?.message ?? "Failed to update comment like");
+      }
+    },
+    [session, activeCommentTrendId, loadTrendComments, loadProfile]
+  );
 
   // -----------------------
   // Auth handlers
@@ -445,24 +670,89 @@ export default function HomeScreen() {
   // -----------------------
   // UI helpers
   // -----------------------
-  const renderTrendItem = ({ item }: { item: Trend }) => (
-    <View style={[styles.trendCard, { borderColor: colors.border }]}>
-      <Text style={[styles.trendTitle, { color: colors.text }]}>
-        {item.title}
-      </Text>
-      <Text style={{ color: colors.sub, marginBottom: 2 }}>
-        {item.category} · {item.location}
-      </Text>
-      {typeof item.distance_km === "number" && (
-        <Text style={{ color: colors.sub }}>
-          ~{item.distance_km.toFixed(1)} km away
+  const renderTrendItem = ({ item }: { item: Trend }) => {
+    const liked = likedTrendIds.includes(item.id);
+    const likeCount = likeCounts[item.id] ?? item.like_count ?? 0;
+    const commentCount = commentCounts[item.id] ?? item.comment_count ?? 0;
+
+    return (
+      <View style={[styles.trendCard, { borderColor: colors.border }]}>
+        <Text style={[styles.trendTitle, { color: colors.text }]}>
+          {item.title}
         </Text>
-      )}
-      <Text style={{ color: colors.sub, marginTop: 4, fontSize: 12 }}>
-        {new Date(item.created_at).toLocaleString()}
-      </Text>
-    </View>
-  );
+        <Text style={{ color: colors.sub, marginBottom: 2 }}>
+          {item.category} · {item.location}
+        </Text>
+        {typeof item.distance_km === "number" && (
+          <Text style={{ color: colors.sub }}>
+            ~{item.distance_km.toFixed(1)} km away
+          </Text>
+        )}
+        <Text style={{ color: colors.sub, marginTop: 4, fontSize: 12 }}>
+          {new Date(item.created_at).toLocaleString()}
+        </Text>
+
+        <View style={styles.trendActionsRow}>
+          <Pressable
+            onPress={() => handleToggleLike(item.id)}
+            style={[
+              styles.trendActionButton,
+              {
+                borderColor: liked ? "#2563eb" : colors.border,
+                backgroundColor: liked ? "#2563eb22" : "transparent",
+              },
+            ]}
+          >
+            <Text style={{ color: colors.text, fontWeight: "600" }}>
+              {liked ? "❤️ Liked" : "🤍 Like"}
+            </Text>
+            <Text style={{ color: colors.sub, fontSize: 12 }}>
+              {likeCount} like{likeCount === 1 ? "" : "s"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => handleOpenComments(item.id)}
+            style={[styles.trendActionButton, { borderColor: colors.border }]}
+          >
+            <Text style={{ color: colors.text, fontWeight: "600" }}>💬 Comment</Text>
+            <Text style={{ color: colors.sub, fontSize: 12 }}>
+              {commentCount} comment{commentCount === 1 ? "" : "s"}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  };
+
+  const renderCommentItem = ({ item }: { item: TrendComment }) => {
+    const liked = likedCommentIds.includes(item.id);
+    const likeCount = commentLikeCounts[item.id] ?? item.like_count ?? 0;
+
+    return (
+      <View style={[styles.commentBubble, { borderColor: colors.border }]}>
+        <Text style={{ color: colors.text }}>{item.comment}</Text>
+        <Text style={[styles.commentMeta, { color: colors.sub }]}>
+          {(item.user_id ?? "user").slice(0, 6)} • {new Date(item.created_at).toLocaleString()}
+        </Text>
+        <Pressable
+          onPress={() => handleToggleCommentLike(item.id)}
+          style={[
+            styles.commentLikeButton,
+            {
+              borderColor: liked ? "#f43f5e" : colors.border,
+              backgroundColor: liked ? "#f43f5e22" : "transparent",
+            },
+          ]}
+        >
+          <Text style={{ color: colors.text, fontWeight: "600" }}>{liked ? "❤️ Liked" : "🤍 Like"}</Text>
+          <Text style={{ color: colors.sub, fontSize: 12 }}>
+            {likeCount} like{likeCount === 1 ? "" : "s"}
+          </Text>
+        </Pressable>
+      </View>
+    );
+  };
 
   const renderLeaderboardItem = ({ item, index }: { item: LeaderboardRow; index: number }) => {
     const isYou = session?.user && session.user.id === item.id;
@@ -611,10 +901,11 @@ export default function HomeScreen() {
   const userPoints = profile?.points ?? 0;
 
   return (
-    <ScrollView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={styles.scrollContent}
-    >
+    <>
+      <ScrollView
+        style={{ flex: 1, backgroundColor: colors.bg }}
+        contentContainerStyle={styles.scrollContent}
+      >
       <View style={styles.headerRow}>
         <View>
           <Text style={[styles.title, { color: colors.text }]}>
@@ -1029,7 +1320,93 @@ export default function HomeScreen() {
             </View>
           )}
       </View>
-    </ScrollView>
+      </ScrollView>
+
+      <Modal
+        visible={commentsVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={handleCloseComments}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.commentSheet, { borderColor: colors.border, backgroundColor: colors.cardBg }]}>
+            <View style={styles.commentModalHeader}>
+              <View style={{ flex: 1, marginRight: 12 }}>
+                <Text style={{ color: colors.text, fontSize: 16, fontWeight: "700" }} numberOfLines={2}>
+                  {activeTrend?.title ?? "Comments"}
+                </Text>
+                {activeTrend && (
+                  <Text style={{ color: colors.sub, fontSize: 12, marginTop: 2 }}>
+                    {(commentCounts[activeTrend.id] ?? activeTrend.comment_count ?? trendComments.length)} comment
+                    {(commentCounts[activeTrend.id] ?? activeTrend.comment_count ?? trendComments.length) === 1 ? "" : "s"}
+                  </Text>
+                )}
+              </View>
+              <Pressable onPress={handleCloseComments} style={styles.closeButton}>
+                <Text style={{ color: colors.sub, fontWeight: "600" }}>Close</Text>
+              </Pressable>
+            </View>
+
+            <View style={{ maxHeight: 320, width: "100%" }}>
+              {trendCommentsLoading ? (
+                <ActivityIndicator color={colors.sub} style={{ marginVertical: 20 }} />
+              ) : (
+                <FlatList
+                  data={trendComments}
+                  keyExtractor={(item) => item.id}
+                  renderItem={renderCommentItem}
+                  ListEmptyComponent={
+                    <Text style={{ color: colors.sub, marginBottom: 12 }}>
+                      No comments yet. Be the first to share a tip!
+                    </Text>
+                  }
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  contentContainerStyle={{ paddingBottom: 8 }}
+                  style={{ flexGrow: 0 }}
+                />
+              )}
+            </View>
+
+            <View style={styles.commentInputRow}>
+              <TextInput
+                style={[
+                  styles.commentInput,
+                  {
+                    borderColor: colors.border,
+                    color: colors.text,
+                    backgroundColor: colors.bg,
+                  },
+                ]}
+                placeholder="Write a comment"
+                placeholderTextColor={colors.sub}
+                value={newComment}
+                onChangeText={setNewComment}
+                multiline
+                editable={!postingComment}
+              />
+              <Pressable
+                onPress={handleSubmitComment}
+                disabled={postingComment}
+                style={[
+                  styles.commentPostButton,
+                  {
+                    backgroundColor: colors.buttonBg,
+                    opacity: postingComment ? 0.7 : 1,
+                  },
+                ]}
+              >
+                {postingComment ? (
+                  <ActivityIndicator color={colors.buttonText} />
+                ) : (
+                  <Text style={{ color: colors.buttonText, fontWeight: "700" }}>Post</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -1124,5 +1501,81 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+  },
+  trendActionsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+  },
+  trendActionButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    alignItems: "flex-start",
+    justifyContent: "center",
+  },
+  commentBubble: {
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 8,
+  },
+  commentMeta: {
+    marginTop: 6,
+    fontSize: 11,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "#000000aa",
+    justifyContent: "flex-end",
+    padding: 16,
+  },
+  commentSheet: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    maxHeight: "80%",
+  },
+  commentModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  closeButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#1f2937",
+  },
+  commentInputRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 10,
+    marginTop: 12,
+  },
+  commentInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    minHeight: 44,
+    maxHeight: 120,
+  },
+  commentPostButton: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  commentLikeButton: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignSelf: "flex-start",
   },
 });
