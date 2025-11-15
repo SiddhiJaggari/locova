@@ -1,7 +1,7 @@
 // components/TrendList.tsx
 import React from "react";
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
-import { Trend } from "../types";
+import { Trend } from "../type";
 
 type Props = {
   colors: any;
