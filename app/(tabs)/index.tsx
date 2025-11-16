@@ -36,6 +36,7 @@ import {
   toggleTrendLike
 } from "../../services/trends";
 import { LeaderboardRow, Trend, TrendComment, UserProfile } from "../../type";
+import { getUserLevel } from "../../utils/level";
 
 // Configure notification handler
 Notifications.setNotificationHandler({
@@ -131,6 +132,8 @@ export default function HomeScreen() {
   // Leaderboard
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [leaderboardScope, setLeaderboardScope] = useState<"global" | "nearby">("global");
+  const [trendsScope, setTrendsScope] = useState<"global" | "nearby">("global");
 
   // Global loading (initial)
   const [initialLoading, setInitialLoading] = useState(true);
@@ -153,6 +156,8 @@ export default function HomeScreen() {
     () => trends.find((t) => t.id === activeCommentTrendId) ?? null,
     [trends, activeCommentTrendId]
   );
+  const userPoints = profile?.points ?? 0;
+  const userLevel = useMemo(() => getUserLevel(userPoints), [userPoints]);
 
   const fetchEngagementSnapshot = useCallback(
     async (trendIds: string[]) => {
@@ -329,9 +334,98 @@ export default function HomeScreen() {
     }
   }, [currentLat, currentLng, radiusKm]);
 
-  // -----------------------
-  // Trend engagement actions
-  // -----------------------
+  const loadLeaderboardNearby = useCallback(async () => {
+    if (!currentLat || !currentLng) {
+      Alert.alert("Location", "Please get your location first.");
+      return;
+    }
+
+    const radius = parseFloat(radiusKm || "0");
+    if (!radius || radius <= 0) {
+      Alert.alert("Radius", "Please enter a valid radius in km.");
+      return;
+    }
+
+    try {
+      setLeaderboardLoading(true);
+      const { data: nearbyTrends, error } = await supabase.rpc("trends_within_radius", {
+        in_lat: currentLat,
+        in_lng: currentLng,
+        radius_km: radius,
+      });
+      if (error) throw error;
+
+      const nearby = (nearbyTrends as Trend[] | null) ?? [];
+      const uniqueUserIds = Array.from(
+        new Set(
+          nearby
+            .map((trend) => trend.user_id)
+            .filter((id): id is string => typeof id === "string" && id.length > 0)
+        )
+      );
+
+      if (uniqueUserIds.length === 0) {
+        setLeaderboard([]);
+        return;
+      }
+
+      const { data: profiles, error: profilesError } = await supabase
+        .from("user_profiles")
+        .select("id, points, display_name, avatar_url")
+        .in("id", uniqueUserIds)
+        .order("points", { ascending: false })
+        .limit(10);
+
+      if (profilesError) throw profilesError;
+      setLeaderboard((profiles ?? []) as LeaderboardRow[]);
+    } catch (e) {
+      console.error("loadLeaderboardNearby error:", e);
+      Alert.alert("Error", "Failed to load nearby leaderboard");
+    } finally {
+      setLeaderboardLoading(false);
+    }
+  }, [currentLat, currentLng, radiusKm]);
+
+  const refreshTrends = useCallback(
+    async (scopeOverride?: "global" | "nearby") => {
+      const scope = scopeOverride ?? trendsScope;
+      if (scope === "nearby") {
+        await loadNearbyTrends();
+      } else {
+        await loadTrends();
+      }
+    },
+    [trendsScope, loadTrends, loadNearbyTrends]
+  );
+
+  const refreshLeaderboard = useCallback(
+    async (scopeOverride?: "global" | "nearby") => {
+      const scope = scopeOverride ?? leaderboardScope;
+      if (scope === "nearby") {
+        await loadLeaderboardNearby();
+      } else {
+        await loadLeaderboard();
+      }
+    },
+    [leaderboardScope, loadLeaderboard, loadLeaderboardNearby]
+  );
+
+  const handleChangeTrendsScope = useCallback(
+    async (scope: "global" | "nearby") => {
+      setTrendsScope(scope);
+      await refreshTrends(scope);
+    },
+    [refreshTrends]
+  );
+
+  const handleChangeLeaderboardScope = useCallback(
+    async (scope: "global" | "nearby") => {
+      setLeaderboardScope(scope);
+      await refreshLeaderboard(scope);
+    },
+    [refreshLeaderboard]
+  );
+
   const handleToggleLike = useCallback(
     async (trendId: string) => {
       if (!session?.user) {
@@ -343,13 +437,40 @@ export default function HomeScreen() {
         const result = await toggleTrendLike(trendId, session.user.id);
         if (result === "liked") {
           try {
-            await supabase.rpc("increment_points", {
-              user_id_input: session.user.id,
-              amount: 2,
-            });
-            await loadProfile(session.user.id);
-          } catch (rpcError) {
-            console.warn("increment_points like bonus failed:", rpcError);
+            const { data: rewardExists, error: rewardCheckError } = await supabase
+              .from("trend_like_rewards")
+              .select("id")
+              .eq("trend_id", trendId)
+              .eq("user_id", session.user.id)
+              .maybeSingle();
+
+            if (rewardCheckError) {
+              throw rewardCheckError;
+            }
+
+            if (!rewardExists) {
+              const { error: rewardInsertError } = await supabase
+                .from("trend_like_rewards")
+                .insert({ trend_id: trendId, user_id: session.user.id });
+
+              if (rewardInsertError && rewardInsertError.code !== "23505") {
+                throw rewardInsertError;
+              }
+
+              if (!rewardInsertError || rewardInsertError.code === "23505") {
+                try {
+                  await supabase.rpc("increment_points", {
+                    user_id_input: session.user.id,
+                    amount: 2,
+                  });
+                  await loadProfile(session.user.id);
+                } catch (rpcError) {
+                  console.warn("increment_points like bonus failed:", rpcError);
+                }
+              }
+            }
+          } catch (rewardError) {
+            console.warn("trend like reward tracking failed:", rewardError);
           }
         }
         await applyEngagementSnapshot();
@@ -452,13 +573,40 @@ export default function HomeScreen() {
         const result = await toggleCommentLike(commentId, session.user.id);
         if (result === "liked") {
           try {
-            await supabase.rpc("increment_points", {
-              user_id_input: session.user.id,
-              amount: 2,
-            });
-            await loadProfile(session.user.id);
-          } catch (rpcError) {
-            console.warn("increment_points comment-like bonus failed:", rpcError);
+            const { data: rewardExists, error: rewardCheckError } = await supabase
+              .from("trend_comment_like_rewards")
+              .select("id")
+              .eq("comment_id", commentId)
+              .eq("user_id", session.user.id)
+              .maybeSingle();
+
+            if (rewardCheckError) {
+              throw rewardCheckError;
+            }
+
+            if (!rewardExists) {
+              const { error: rewardInsertError } = await supabase
+                .from("trend_comment_like_rewards")
+                .insert({ comment_id: commentId, user_id: session.user.id });
+
+              if (rewardInsertError && rewardInsertError.code !== "23505") {
+                throw rewardInsertError;
+              }
+
+              if (!rewardInsertError || rewardInsertError.code === "23505") {
+                try {
+                  await supabase.rpc("increment_points", {
+                    user_id_input: session.user.id,
+                    amount: 2,
+                  });
+                  await loadProfile(session.user.id);
+                } catch (rpcError) {
+                  console.warn("increment_points comment-like bonus failed:", rpcError);
+                }
+              }
+            }
+          } catch (rewardError) {
+            console.warn("comment like reward tracking failed:", rewardError);
           }
         }
         if (activeCommentTrendId) {
@@ -587,9 +735,32 @@ export default function HomeScreen() {
         user_id: session.user.id,
       };
 
-      if (currentLat && currentLng) {
-        insertPayload.lat = currentLat;
-        insertPayload.lng = currentLng;
+      let resolvedLat = currentLat;
+      let resolvedLng = currentLng;
+
+      if (resolvedLat == null || resolvedLng == null) {
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === "granted") {
+            const position = await Location.getCurrentPositionAsync({});
+            resolvedLat = position.coords.latitude;
+            resolvedLng = position.coords.longitude;
+            setCurrentLat(resolvedLat);
+            setCurrentLng(resolvedLng);
+          } else {
+            console.warn("Location permission denied while creating trend; saving without coordinates.");
+          }
+        } catch (locError) {
+          console.warn("Failed to capture GPS coordinates for trend:", locError);
+        }
+      }
+
+      if (resolvedLat != null && resolvedLng != null) {
+        insertPayload.latitude = resolvedLat;
+        insertPayload.longitude = resolvedLng;
+        // Retain legacy columns to keep compatibility with existing queries
+        insertPayload.lat = resolvedLat;
+        insertPayload.lng = resolvedLng;
       }
 
       const { error: insertError } = await supabase
@@ -758,6 +929,7 @@ export default function HomeScreen() {
     const isYou = session?.user && session.user.id === item.id;
     const name = item.display_name || "Anonymous";
     const avatarUri = item.avatar_url ? item.avatar_url + "?v=" + Date.now() : null;
+    const level = getUserLevel(item.points);
 
     return (
       <View
@@ -797,8 +969,13 @@ export default function HomeScreen() {
         
         <View style={{ flex: 1, marginLeft: 8 }}>
           <Text style={{ color: colors.text, fontWeight: "600" }}>
-            {name}{isYou ? " (You)" : ""}
+            {name}
+            {isYou ? " (You)" : ""}
           </Text>
+          <View style={styles.levelBadge}>
+            <Text style={{ fontSize: 16 }}>{level.emoji}</Text>
+            <Text style={{ color: colors.sub, fontWeight: "600" }}>{level.name}</Text>
+          </View>
         </View>
         <Text style={{ color: colors.text, fontWeight: "700" }}>
           {item.points} pts
@@ -898,7 +1075,6 @@ export default function HomeScreen() {
   // -----------------------
   // Logged in UI
   // -----------------------
-  const userPoints = profile?.points ?? 0;
 
   return (
     <>
@@ -1102,7 +1278,7 @@ export default function HomeScreen() {
         </View>
 
         <Pressable
-          onPress={loadNearbyTrends}
+          onPress={() => handleChangeTrendsScope("nearby")}
           style={[
             styles.button,
             { backgroundColor: "#111827", marginTop: 8 },
@@ -1192,11 +1368,47 @@ export default function HomeScreen() {
       <View
         style={[styles.card, { borderColor: colors.border }]}
       >
-        <Text
-          style={[styles.sectionTitle, { color: colors.text }]}
-        >
-          🔥 Trends
-        </Text>
+        <View style={styles.rowBetween}>
+          <Text
+            style={[styles.sectionTitle, { color: colors.text }]}
+          >
+            🔥 Trends
+          </Text>
+          <View style={styles.scopeToggle}>
+            <Pressable
+              onPress={() => handleChangeTrendsScope("global")}
+              style={[
+                styles.scopeToggleButton,
+                trendsScope === "global" && styles.scopeToggleButtonActive,
+              ]}
+            >
+              <Text
+                style={{
+                  color: trendsScope === "global" ? colors.buttonText : colors.sub,
+                  fontWeight: "600",
+                }}
+              >
+                Global
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => handleChangeTrendsScope("nearby")}
+              style={[
+                styles.scopeToggleButton,
+                trendsScope === "nearby" && styles.scopeToggleButtonActive,
+              ]}
+            >
+              <Text
+                style={{
+                  color: trendsScope === "nearby" ? colors.buttonText : colors.sub,
+                  fontWeight: "600",
+                }}
+              >
+                Nearby
+              </Text>
+            </Pressable>
+          </View>
+        </View>
         {trendsLoading && (
           <ActivityIndicator color={colors.sub} size="small" />
         )}
@@ -1226,7 +1438,7 @@ export default function HomeScreen() {
             🏆 Leaderboard
           </Text>
           <Pressable
-            onPress={loadLeaderboard}
+            onPress={() => refreshLeaderboard(leaderboardScope)}
             style={[
               styles.button,
               {
@@ -1243,6 +1455,40 @@ export default function HomeScreen() {
               ]}
             >
               Refresh
+            </Text>
+          </Pressable>
+        </View>
+        <View style={[styles.scopeToggle, { marginTop: 8 }]}> 
+          <Pressable
+            onPress={() => handleChangeLeaderboardScope("global")}
+            style={[
+              styles.scopeToggleButton,
+              leaderboardScope === "global" && styles.scopeToggleButtonActive,
+            ]}
+          >
+            <Text
+              style={{
+                color: leaderboardScope === "global" ? colors.buttonText : colors.sub,
+                fontWeight: "600",
+              }}
+            >
+              Global
+            </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => handleChangeLeaderboardScope("nearby")}
+            style={[
+              styles.scopeToggleButton,
+              leaderboardScope === "nearby" && styles.scopeToggleButtonActive,
+            ]}
+          >
+            <Text
+              style={{
+                color: leaderboardScope === "nearby" ? colors.buttonText : colors.sub,
+                fontWeight: "600",
+              }}
+            >
+              Nearby
             </Text>
           </Pressable>
         </View>
@@ -1310,12 +1556,18 @@ export default function HomeScreen() {
                   </View>
                 )}
                 
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text, fontWeight: "600" }}>
-                    {profile.display_name || "You"}
-                  </Text>
+                <View style={styles.profileLevelRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.text, fontSize: 20, fontWeight: "700" }}>
+                      {profile.display_name || "You"}
+                    </Text>
+                    <View style={styles.levelBadge}>
+                      <Text style={{ fontSize: 18 }}>{userLevel.emoji}</Text>
+                      <Text style={{ color: colors.text, fontWeight: "600" }}>{userLevel.name}</Text>
+                      <Text style={{ color: colors.sub, marginLeft: 8 }}>{userPoints} pts</Text>
+                    </View>
+                  </View>
                 </View>
-                <Text style={{ color: colors.text, fontWeight: "700" }}>{profile.points} pts</Text>
               </View>
             </View>
           )}
@@ -1482,6 +1734,22 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
   },
+  scopeToggle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  scopeToggleButton: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
+  scopeToggleButtonActive: {
+    backgroundColor: colors.buttonBg,
+    borderColor: colors.buttonBg,
+  },
   trendCard: {
     borderWidth: 1,
     borderRadius: 12,
@@ -1577,5 +1845,18 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 12,
     alignSelf: "flex-start",
+  },
+  profileLevelRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 12,
+  },
+  levelBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 4,
   },
 });

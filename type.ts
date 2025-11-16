@@ -10,6 +10,12 @@ export type Trend = {
 
   // Optional fields we added later
   user_id?: string | null;
+
+  // Day 11 geo metadata (new columns)
+  latitude?: number | null;
+  longitude?: number | null;
+
+  // Legacy fields retained for backward compatibility with older rows
   lat?: number | null;
   lng?: number | null;
 
@@ -49,3 +55,17 @@ export type TrendComment = {
   like_count?: number;
   liked_by_current_user?: boolean;
 };
+
+export type LevelInfo = {
+  name: string;
+  minPoints: number;
+  emoji: string;
+};
+
+export const LEVELS: LevelInfo[] = [
+  { name: "Newbie", minPoints: 0, emoji: "🧢" },
+  { name: "Explorer", minPoints: 50, emoji: "🎒" },
+  { name: "Trendsetter", minPoints: 150, emoji: "🔥" },
+  { name: "Influencer", minPoints: 300, emoji: "📸" },
+  { name: "Local Legend", minPoints: 500, emoji: "🏆" },
+];
