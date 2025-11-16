@@ -24,6 +24,40 @@ export async function fetchTrendsUnified(
   }
 }
 
+export async function toggleTrendSave(trendId: string, userId: string): Promise<"saved" | "unsaved"> {
+  const { data: existing, error: fetchError } = await supabase
+    .from("trend_saves")
+    .select("id")
+    .eq("trend_id", trendId)
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (fetchError) throw fetchError;
+
+  if (existing) {
+    const { error } = await supabase.from("trend_saves").delete().eq("id", existing.id);
+    if (error) throw error;
+    return "unsaved";
+  }
+
+  const { error } = await supabase.from("trend_saves").insert({ trend_id: trendId, user_id: userId });
+  if (error) throw error;
+  return "saved";
+}
+
+export async function fetchSavedTrends(userId: string): Promise<Trend[]> {
+  const { data, error } = await supabase
+    .from("trend_saves")
+    .select("trend_id, trends(*)")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) throw error;
+
+  const rows = (data as unknown as { trend_id: string; trends: Trend | null }[] | null) ?? [];
+  return rows.map((row) => row.trends).filter((trend): trend is Trend => Boolean(trend));
+}
+
 export function subscribeTrends(onChange: () => void) {
   const channel = supabase
     .channel("trends-rt")
@@ -60,22 +94,28 @@ export async function fetchTrendEngagement(
   likeCounts: Record<string, number>;
   commentCounts: Record<string, number>;
   likedTrendIds: string[];
+  saveCounts: Record<string, number>;
+  savedTrendIds: string[];
 }> {
   if (trendIds.length === 0) {
-    return { likeCounts: {}, commentCounts: {}, likedTrendIds: [] };
+    return { likeCounts: {}, commentCounts: {}, likedTrendIds: [], saveCounts: {}, savedTrendIds: [] };
   }
 
-  const [likes, comments] = await Promise.all([
+  const [likes, comments, saves] = await Promise.all([
     supabase.from("trend_likes").select("trend_id,user_id").in("trend_id", trendIds),
     supabase.from("trend_comments").select("trend_id").in("trend_id", trendIds),
+    supabase.from("trend_saves").select("trend_id,user_id").in("trend_id", trendIds),
   ]);
 
   if (likes.error) throw likes.error;
   if (comments.error) throw comments.error;
+  if (saves.error) throw saves.error;
 
   const likeCounts: Record<string, number> = {};
   const likedSet = new Set<string>();
   const commentCounts: Record<string, number> = {};
+  const saveCounts: Record<string, number> = {};
+  const savedSet = new Set<string>();
 
   likes.data?.forEach((row) => {
     likeCounts[row.trend_id] = (likeCounts[row.trend_id] ?? 0) + 1;
@@ -88,10 +128,19 @@ export async function fetchTrendEngagement(
     commentCounts[row.trend_id] = (commentCounts[row.trend_id] ?? 0) + 1;
   });
 
+  saves.data?.forEach((row) => {
+    saveCounts[row.trend_id] = (saveCounts[row.trend_id] ?? 0) + 1;
+    if (currentUserId && row.user_id === currentUserId) {
+      savedSet.add(row.trend_id);
+    }
+  });
+
   return {
     likeCounts,
     commentCounts,
     likedTrendIds: Array.from(likedSet),
+    saveCounts,
+    savedTrendIds: Array.from(savedSet),
   };
 }
 

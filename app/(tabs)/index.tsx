@@ -1,10 +1,10 @@
 // app/(tabs)/index.tsx
-import { Session } from "@supabase/supabase-js";
+import { RealtimePostgresChangesPayload, Session } from "@supabase/supabase-js";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -33,7 +33,8 @@ import {
   fetchTrendEngagement,
   submitTrendComment,
   toggleCommentLike,
-  toggleTrendLike
+  toggleTrendLike,
+  toggleTrendSave
 } from "../../services/trends";
 import { LeaderboardRow, Trend, TrendComment, UserProfile } from "../../type";
 import { getUserLevel } from "../../utils/level";
@@ -150,6 +151,22 @@ export default function HomeScreen() {
   const [postingComment, setPostingComment] = useState(false);
   const [commentLikeCounts, setCommentLikeCounts] = useState<Record<string, number>>({});
   const [likedCommentIds, setLikedCommentIds] = useState<string[]>([]);
+  const [saveCounts, setSaveCounts] = useState<Record<string, number>>({});
+  const [savedTrendIds, setSavedTrendIds] = useState<string[]>([]);
+
+  // Refs for realtime handlers
+  const engagementRefreshRef = useRef<(() => Promise<void>) | null>(null);
+  const loadTrendCommentsRef = useRef<((trendId: string) => Promise<void>) | null>(null);
+  const activeCommentTrendIdRef = useRef(activeCommentTrendId);
+  const commentsVisibleRef = useRef(commentsVisible);
+
+  useEffect(() => {
+    activeCommentTrendIdRef.current = activeCommentTrendId;
+  }, [activeCommentTrendId]);
+
+  useEffect(() => {
+    commentsVisibleRef.current = commentsVisible;
+  }, [commentsVisible]);
 
   const currentUserId = session?.user?.id ?? null;
   const activeTrend = useMemo(
@@ -166,6 +183,8 @@ export default function HomeScreen() {
           likeCounts: {},
           commentCounts: {},
           likedTrendIds: [],
+          saveCounts: {},
+          savedTrendIds: [],
         };
       }
 
@@ -180,10 +199,16 @@ export default function HomeScreen() {
       setLikeCounts(snapshot.likeCounts);
       setCommentCounts(snapshot.commentCounts);
       setLikedTrendIds(snapshot.likedTrendIds);
+      setSaveCounts(snapshot.saveCounts);
+      setSavedTrendIds(snapshot.savedTrendIds);
     } catch (error) {
       console.error("fetchTrendEngagement error:", error);
     }
   }, [fetchEngagementSnapshot, trends]);
+
+  useEffect(() => {
+    engagementRefreshRef.current = applyEngagementSnapshot;
+  }, [applyEngagementSnapshot]);
 
   useEffect(() => {
     let mounted = true;
@@ -196,6 +221,8 @@ export default function HomeScreen() {
         setLikeCounts(snapshot.likeCounts);
         setCommentCounts(snapshot.commentCounts);
         setLikedTrendIds(snapshot.likedTrendIds);
+        setSaveCounts(snapshot.saveCounts);
+        setSavedTrendIds(snapshot.savedTrendIds);
       } catch (error) {
         if (!mounted) return;
         console.error("fetchTrendEngagement error:", error);
@@ -206,6 +233,52 @@ export default function HomeScreen() {
       mounted = false;
     };
   }, [trends, fetchEngagementSnapshot]);
+
+  useEffect(() => {
+    const likeChannel = (supabase
+      .channel("realtime:trend_likes") as any)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "trend_likes",
+        },
+        () => {
+          engagementRefreshRef.current?.();
+        }
+      )
+      .subscribe();
+
+    const commentChannel = (supabase
+      .channel("realtime:trend_comments") as any)
+      .on(
+        "postgres_changes",
+        {
+          event: "insert",
+          schema: "public",
+          table: "trend_comments",
+        },
+        (payload: RealtimePostgresChangesPayload<{ trend_id?: string }>) => {
+          engagementRefreshRef.current?.();
+
+          const trendId = (payload.new as { trend_id?: string } | null)?.trend_id;
+          if (
+            trendId &&
+            commentsVisibleRef.current &&
+            activeCommentTrendIdRef.current === trendId
+          ) {
+            loadTrendCommentsRef.current?.(trendId);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(likeChannel);
+      supabase.removeChannel(commentChannel);
+    };
+  }, []);
 
   // -----------------------
   // Auth: Session listener
@@ -480,6 +553,24 @@ export default function HomeScreen() {
       }
     },
     [session, applyEngagementSnapshot, loadProfile]
+  );
+
+  const handleToggleSave = useCallback(
+    async (trendId: string) => {
+      if (!session?.user) {
+        Alert.alert("Log in", "You need an account to save a trend.");
+        return;
+      }
+
+      try {
+        await toggleTrendSave(trendId, session.user.id);
+        await applyEngagementSnapshot();
+      } catch (error: any) {
+        console.error("toggleTrendSave error:", error);
+        Alert.alert("Error", error?.message ?? "Failed to update save");
+      }
+    },
+    [session, applyEngagementSnapshot]
   );
 
   const loadTrendComments = useCallback(async (trendId: string) => {
@@ -845,6 +936,8 @@ export default function HomeScreen() {
     const liked = likedTrendIds.includes(item.id);
     const likeCount = likeCounts[item.id] ?? item.like_count ?? 0;
     const commentCount = commentCounts[item.id] ?? item.comment_count ?? 0;
+    const saved = savedTrendIds.includes(item.id);
+    const saveCount = saveCounts[item.id] ?? item.save_count ?? 0;
 
     return (
       <View style={[styles.trendCard, { borderColor: colors.border }]}>
@@ -889,6 +982,24 @@ export default function HomeScreen() {
             <Text style={{ color: colors.text, fontWeight: "600" }}>💬 Comment</Text>
             <Text style={{ color: colors.sub, fontSize: 12 }}>
               {commentCount} comment{commentCount === 1 ? "" : "s"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => handleToggleSave(item.id)}
+            style={[
+              styles.trendActionButton,
+              {
+                borderColor: saved ? "#fbbf24" : colors.border,
+                backgroundColor: saved ? "#fbbf2422" : "transparent",
+              },
+            ]}
+          >
+            <Text style={{ color: colors.text, fontWeight: "600" }}>
+              {saved ? "📌 Saved" : "📍 Save"}
+            </Text>
+            <Text style={{ color: colors.sub, fontSize: 12 }}>
+              {saveCount} save{saveCount === 1 ? "" : "s"}
             </Text>
           </Pressable>
         </View>
@@ -1130,7 +1241,13 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      {/* Profile */}
+      <View style={[styles.liveBadge, { borderColor: "#064e3b", backgroundColor: "#065f4630" }]}> 
+        <Text style={{ color: "#a7f3d0", fontSize: 12, fontWeight: "600" }}>
+          🟢 Live updates enabled
+        </Text>
+      </View>
+
+      {/* Location */}
       <View
         style={[styles.card, { borderColor: colors.border }]}
       >
@@ -1749,6 +1866,14 @@ const styles = StyleSheet.create({
   scopeToggleButtonActive: {
     backgroundColor: colors.buttonBg,
     borderColor: colors.buttonBg,
+  },
+  liveBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignSelf: "flex-start",
+    marginBottom: 12,
   },
   trendCard: {
     borderWidth: 1,

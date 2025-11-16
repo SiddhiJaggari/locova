@@ -94,7 +94,16 @@ CREATE TABLE IF NOT EXISTS trend_comment_likes (
   UNIQUE(comment_id, user_id)
 );
 
--- 8. Create reward tracking tables to avoid duplicate point awards
+-- 8. Create trend_saves table (bookmarks)
+CREATE TABLE IF NOT EXISTS trend_saves (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trend_id UUID NOT NULL REFERENCES trends(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  UNIQUE(trend_id, user_id)
+);
+
+-- 9. Create reward tracking tables to avoid duplicate point awards
 CREATE TABLE IF NOT EXISTS trend_like_rewards (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   trend_id UUID NOT NULL REFERENCES trends(id) ON DELETE CASCADE,
@@ -111,14 +120,15 @@ CREATE TABLE IF NOT EXISTS trend_comment_like_rewards (
   UNIQUE(comment_id, user_id)
 );
 
--- 9. Enable RLS on all tables
+-- 10. Enable RLS on all tables
 ALTER TABLE trend_likes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trend_comments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trend_comment_likes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE trend_saves ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trend_like_rewards ENABLE ROW LEVEL SECURITY;
 ALTER TABLE trend_comment_like_rewards ENABLE ROW LEVEL SECURITY;
 
--- 10. Drop existing policies if they exist (to avoid conflicts)
+-- 11. Drop existing policies if they exist (to avoid conflicts)
 DROP POLICY IF EXISTS "Anyone can view trend likes" ON trend_likes;
 DROP POLICY IF EXISTS "Users can insert their own trend likes" ON trend_likes;
 DROP POLICY IF EXISTS "Users can delete their own trend likes" ON trend_likes;
@@ -130,12 +140,15 @@ DROP POLICY IF EXISTS "Users can delete their own trend comments" ON trend_comme
 DROP POLICY IF EXISTS "Anyone can view comment likes" ON trend_comment_likes;
 DROP POLICY IF EXISTS "Users can insert their own comment likes" ON trend_comment_likes;
 DROP POLICY IF EXISTS "Users can delete their own comment likes" ON trend_comment_likes;
+DROP POLICY IF EXISTS "Anyone can view trend saves" ON trend_saves;
+DROP POLICY IF EXISTS "Users can insert their own trend saves" ON trend_saves;
+DROP POLICY IF EXISTS "Users can delete their own trend saves" ON trend_saves;
 DROP POLICY IF EXISTS "View trend like rewards" ON trend_like_rewards;
 DROP POLICY IF EXISTS "Insert trend like rewards" ON trend_like_rewards;
 DROP POLICY IF EXISTS "View comment like rewards" ON trend_comment_like_rewards;
 DROP POLICY IF EXISTS "Insert comment like rewards" ON trend_comment_like_rewards;
 
--- 11. Create RLS policies for trend_likes
+-- 12. Create RLS policies for trend_likes
 CREATE POLICY "Anyone can view trend likes"
   ON trend_likes FOR SELECT
   USING (true);
@@ -148,7 +161,7 @@ CREATE POLICY "Users can delete their own trend likes"
   ON trend_likes FOR DELETE
   USING (auth.uid() = user_id);
 
--- 12. Create RLS policies for trend_comments
+-- 13. Create RLS policies for trend_comments
 CREATE POLICY "Anyone can view trend comments"
   ON trend_comments FOR SELECT
   USING (true);
@@ -161,7 +174,7 @@ CREATE POLICY "Users can delete their own trend comments"
   ON trend_comments FOR DELETE
   USING (auth.uid() = user_id);
 
--- 13. Create RLS policies for trend_comment_likes
+-- 14. Create RLS policies for trend_comment_likes
 CREATE POLICY "Anyone can view comment likes"
   ON trend_comment_likes FOR SELECT
   USING (true);
@@ -174,7 +187,20 @@ CREATE POLICY "Users can delete their own comment likes"
   ON trend_comment_likes FOR DELETE
   USING (auth.uid() = user_id);
 
--- 14. Create RLS policies for reward tables
+-- 15. Create RLS policies for trend_saves
+CREATE POLICY "Anyone can view trend saves"
+  ON trend_saves FOR SELECT
+  USING (true);
+
+CREATE POLICY "Users can insert their own trend saves"
+  ON trend_saves FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their own trend saves"
+  ON trend_saves FOR DELETE
+  USING (auth.uid() = user_id);
+
+-- 16. Create RLS policies for reward tables
 CREATE POLICY "View trend like rewards"
   ON trend_like_rewards FOR SELECT
   USING (auth.uid() = user_id);
@@ -191,12 +217,14 @@ CREATE POLICY "Insert comment like rewards"
   ON trend_comment_like_rewards FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
--- 15. Create indexes for better performance
+-- 17. Create indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_trend_likes_trend_id ON trend_likes(trend_id);
 CREATE INDEX IF NOT EXISTS idx_trend_likes_user_id ON trend_likes(user_id);
 CREATE INDEX IF NOT EXISTS idx_trend_comments_trend_id ON trend_comments(trend_id);
 CREATE INDEX IF NOT EXISTS idx_trend_comment_likes_comment_id ON trend_comment_likes(comment_id);
 CREATE INDEX IF NOT EXISTS idx_trend_comment_likes_user_id ON trend_comment_likes(user_id);
+CREATE INDEX IF NOT EXISTS idx_trend_saves_trend_id ON trend_saves(trend_id);
+CREATE INDEX IF NOT EXISTS idx_trend_saves_user_id ON trend_saves(user_id);
 CREATE INDEX IF NOT EXISTS idx_trend_like_rewards_trend_id ON trend_like_rewards(trend_id);
 CREATE INDEX IF NOT EXISTS idx_trend_like_rewards_user_id ON trend_like_rewards(user_id);
 CREATE INDEX IF NOT EXISTS idx_trend_comment_like_rewards_comment_id ON trend_comment_like_rewards(comment_id);

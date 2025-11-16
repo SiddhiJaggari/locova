@@ -26,6 +26,9 @@ export type Trend = {
   like_count?: number;
   comment_count?: number;
   liked_by_current_user?: boolean;
+  // Day 13 save metadata
+  save_count?: number;
+  saved_by_current_user?: boolean;
 };
 
 // A row from `user_profiles`
@@ -54,6 +57,13 @@ export type TrendComment = {
   created_at: string;
   like_count?: number;
   liked_by_current_user?: boolean;
+};
+
+export type TrendSave = {
+  id: string;
+  trend_id: string;
+  user_id: string;
+  created_at: string;
 };
 
 export type LevelInfo = {
