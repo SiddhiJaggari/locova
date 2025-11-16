@@ -16,7 +16,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View
+  View,
 } from "react-native";
 
 import ProfileEditor from "../../components/ProfileEditor";
@@ -135,6 +135,10 @@ export default function HomeScreen() {
   const [leaderboardLoading, setLeaderboardLoading] = useState(false);
   const [leaderboardScope, setLeaderboardScope] = useState<"global" | "nearby">("global");
   const [trendsScope, setTrendsScope] = useState<"global" | "nearby">("global");
+  const [trendSubmitting, setTrendSubmitting] = useState(false);
+  const [likeBusyMap, setLikeBusyMap] = useState<Record<string, boolean>>({});
+  const [saveBusyMap, setSaveBusyMap] = useState<Record<string, boolean>>({});
+  const [commentLikeBusyMap, setCommentLikeBusyMap] = useState<Record<string, boolean>>({});
 
   // Global loading (initial)
   const [initialLoading, setInitialLoading] = useState(true);
@@ -334,8 +338,9 @@ export default function HomeScreen() {
       setProfileLoading(true);
       const data = await getMyProfile(userId);
       setProfile(data);
-    } catch (e) {
+    } catch (e: any) {
       console.error("loadProfile error:", e);
+      Alert.alert("Error", e?.message ?? "Failed to load profile");
     } finally {
       setProfileLoading(false);
     }
@@ -506,6 +511,12 @@ export default function HomeScreen() {
         return;
       }
 
+      if (likeBusyMap[trendId]) {
+        return;
+      }
+
+      setLikeBusyMap((prev) => ({ ...prev, [trendId]: true }));
+
       try {
         const result = await toggleTrendLike(trendId, session.user.id);
         if (result === "liked") {
@@ -550,9 +561,15 @@ export default function HomeScreen() {
       } catch (error: any) {
         console.error("toggleTrendLike error:", error);
         Alert.alert("Error", error?.message ?? "Failed to update like");
+      } finally {
+        setLikeBusyMap((prev) => {
+          const next = { ...prev };
+          delete next[trendId];
+          return next;
+        });
       }
     },
-    [session, applyEngagementSnapshot, loadProfile]
+    [session, applyEngagementSnapshot, loadProfile, likeBusyMap]
   );
 
   const handleToggleSave = useCallback(
@@ -562,15 +579,27 @@ export default function HomeScreen() {
         return;
       }
 
+      if (saveBusyMap[trendId]) {
+        return;
+      }
+
+      setSaveBusyMap((prev) => ({ ...prev, [trendId]: true }));
+
       try {
         await toggleTrendSave(trendId, session.user.id);
         await applyEngagementSnapshot();
       } catch (error: any) {
         console.error("toggleTrendSave error:", error);
         Alert.alert("Error", error?.message ?? "Failed to update save");
+      } finally {
+        setSaveBusyMap((prev) => {
+          const next = { ...prev };
+          delete next[trendId];
+          return next;
+        });
       }
     },
-    [session, applyEngagementSnapshot]
+    [session, applyEngagementSnapshot, saveBusyMap]
   );
 
   const loadTrendComments = useCallback(async (trendId: string) => {
@@ -660,6 +689,12 @@ export default function HomeScreen() {
         return;
       }
 
+      if (commentLikeBusyMap[commentId]) {
+        return;
+      }
+
+      setCommentLikeBusyMap((prev) => ({ ...prev, [commentId]: true }));
+
       try {
         const result = await toggleCommentLike(commentId, session.user.id);
         if (result === "liked") {
@@ -706,15 +741,26 @@ export default function HomeScreen() {
       } catch (error: any) {
         console.error("toggleCommentLike error:", error);
         Alert.alert("Error", error?.message ?? "Failed to update comment like");
+      } finally {
+        setCommentLikeBusyMap((prev) => {
+          const next = { ...prev };
+          delete next[commentId];
+          return next;
+        });
       }
     },
-    [session, activeCommentTrendId, loadTrendComments, loadProfile]
+    [session, activeCommentTrendId, loadTrendComments, loadProfile, commentLikeBusyMap]
   );
 
   // -----------------------
   // Auth handlers
   // -----------------------
   const handleSignUp = useCallback(async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert("Missing fields", "Enter both email and password");
+      return;
+    }
+
     try {
       setAuthLoading(true);
       const { error } = await supabase.auth.signUp({
@@ -732,6 +778,11 @@ export default function HomeScreen() {
   }, [email, password]);
 
   const handleSignIn = useCallback(async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert("Missing fields", "Enter both email and password");
+      return;
+    }
+
     try {
       setAuthLoading(true);
       const { error } = await supabase.auth.signInWithPassword({
@@ -807,21 +858,23 @@ export default function HomeScreen() {
       return;
     }
 
-    if (!newTitle.trim()) {
-      Alert.alert("Missing title", "Please enter a trend title.");
+    const trimmedTitle = newTitle.trim();
+    const trimmedCategory = newCategory.trim();
+    const trimmedLocation = newLocationText.trim();
+
+    if (!trimmedTitle || !trimmedCategory) {
+      Alert.alert("Missing info", "Please provide a title and category.");
       return;
     }
 
     try {
-      setTrendsLoading(true);
+      setTrendSubmitting(true);
 
-      const baseLocation = newLocationText.trim()
-        ? newLocationText.trim()
-        : currentCity || "Unknown";
+      const baseLocation = trimmedLocation ? trimmedLocation : currentCity || "Unknown";
 
       const insertPayload: any = {
-        title: newTitle.trim(),
-        category: newCategory.trim(),
+        title: trimmedTitle,
+        category: trimmedCategory,
         location: baseLocation,
         user_id: session.user.id,
       };
@@ -874,12 +927,12 @@ export default function HomeScreen() {
       await Promise.all([loadTrends(), loadProfile(session.user.id)]);
 
       setNewTitle("");
-      // Keep category & location as is
+      Alert.alert("Trend posted", "Thanks for sharing a trend!");
     } catch (e: any) {
       console.error("handleAddTrend error:", e);
       Alert.alert("Error", e?.message ?? "Failed to add trend");
     } finally {
-      setTrendsLoading(false);
+      setTrendSubmitting(false);
     }
   }, [
     session,
@@ -938,6 +991,8 @@ export default function HomeScreen() {
     const commentCount = commentCounts[item.id] ?? item.comment_count ?? 0;
     const saved = savedTrendIds.includes(item.id);
     const saveCount = saveCounts[item.id] ?? item.save_count ?? 0;
+    const likeBusy = !!likeBusyMap[item.id];
+    const saveBusy = !!saveBusyMap[item.id];
 
     return (
       <View style={[styles.trendCard, { borderColor: colors.border }]}>
@@ -959,17 +1014,22 @@ export default function HomeScreen() {
         <View style={styles.trendActionsRow}>
           <Pressable
             onPress={() => handleToggleLike(item.id)}
+            disabled={likeBusy}
             style={[
               styles.trendActionButton,
               {
                 borderColor: liked ? "#2563eb" : colors.border,
                 backgroundColor: liked ? "#2563eb22" : "transparent",
+                opacity: likeBusy ? 0.65 : 1,
               },
             ]}
           >
-            <Text style={{ color: colors.text, fontWeight: "600" }}>
-              {liked ? "❤️ Liked" : "🤍 Like"}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ color: colors.text, fontWeight: "600" }}>
+                {liked ? "❤️ Liked" : "🤍 Like"}
+              </Text>
+              {likeBusy && <ActivityIndicator color="#2563eb" size="small" />}
+            </View>
             <Text style={{ color: colors.sub, fontSize: 12 }}>
               {likeCount} like{likeCount === 1 ? "" : "s"}
             </Text>
@@ -987,17 +1047,22 @@ export default function HomeScreen() {
 
           <Pressable
             onPress={() => handleToggleSave(item.id)}
+            disabled={saveBusy}
             style={[
               styles.trendActionButton,
               {
                 borderColor: saved ? "#fbbf24" : colors.border,
                 backgroundColor: saved ? "#fbbf2422" : "transparent",
+                opacity: saveBusy ? 0.65 : 1,
               },
             ]}
           >
-            <Text style={{ color: colors.text, fontWeight: "600" }}>
-              {saved ? "📌 Saved" : "📍 Save"}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={{ color: colors.text, fontWeight: "600" }}>
+                {saved ? "📌 Saved" : "📍 Save"}
+              </Text>
+              {saveBusy && <ActivityIndicator color="#fbbf24" size="small" />}
+            </View>
             <Text style={{ color: colors.sub, fontSize: 12 }}>
               {saveCount} save{saveCount === 1 ? "" : "s"}
             </Text>
@@ -1010,6 +1075,7 @@ export default function HomeScreen() {
   const renderCommentItem = ({ item }: { item: TrendComment }) => {
     const liked = likedCommentIds.includes(item.id);
     const likeCount = commentLikeCounts[item.id] ?? item.like_count ?? 0;
+    const commentBusy = !!commentLikeBusyMap[item.id];
 
     return (
       <View style={[styles.commentBubble, { borderColor: colors.border }]}>
@@ -1019,15 +1085,21 @@ export default function HomeScreen() {
         </Text>
         <Pressable
           onPress={() => handleToggleCommentLike(item.id)}
+          disabled={commentBusy}
           style={[
             styles.commentLikeButton,
             {
               borderColor: liked ? "#f43f5e" : colors.border,
               backgroundColor: liked ? "#f43f5e22" : "transparent",
+              opacity: commentBusy ? 0.7 : 1,
             },
           ]}
         >
-          <Text style={{ color: colors.text, fontWeight: "600" }}>{liked ? "❤️ Liked" : "🤍 Like"}</Text>
+          {commentBusy ? (
+            <ActivityIndicator color="#f43f5e" size="small" />
+          ) : (
+            <Text style={{ color: colors.text, fontWeight: "600" }}>{liked ? "❤️ Liked" : "🤍 Like"}</Text>
+          )}
           <Text style={{ color: colors.sub, fontSize: 12 }}>
             {likeCount} like{likeCount === 1 ? "" : "s"}
           </Text>
@@ -1457,16 +1529,17 @@ export default function HomeScreen() {
 
         <Pressable
           onPress={handleAddTrend}
-          disabled={trendsLoading}
+          disabled={trendSubmitting}
           style={[
             styles.button,
             {
               backgroundColor: colors.buttonBg,
               marginTop: 6,
+              opacity: trendSubmitting ? 0.7 : 1,
             },
           ]}
         >
-          {trendsLoading ? (
+          {trendSubmitting ? (
             <ActivityIndicator color={colors.buttonText} />
           ) : (
             <Text
@@ -1919,6 +1992,15 @@ const styles = StyleSheet.create({
     marginTop: 6,
     fontSize: 11,
   },
+  commentLikeButton: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 6,
+  },
   modalOverlay: {
     flex: 1,
     backgroundColor: "#000000aa",
@@ -1947,7 +2029,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "flex-end",
     gap: 10,
-    marginTop: 12,
   },
   commentInput: {
     flex: 1,
@@ -1955,33 +2036,22 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    minHeight: 44,
-    maxHeight: 120,
   },
   commentPostButton: {
     borderRadius: 10,
-    paddingVertical: 10,
     paddingHorizontal: 16,
-  },
-  commentLikeButton: {
-    marginTop: 8,
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    alignSelf: "flex-start",
-  },
-  profileLevelRow: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-    marginTop: 12,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
   levelBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginTop: 4,
+  },
+  profileLevelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
 });
