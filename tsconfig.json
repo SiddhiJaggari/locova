@@ -1,9 +1,17 @@
 {
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
+    "baseUrl": ".",
     "strict": true,
     "skipLibCheck": true,
+    "resolvePackageJsonExports": false,
     "paths": {
+      "expo-module-scripts/tsconfig.base": [
+        "node_modules/expo-module-scripts/tsconfig.base.json"
+      ],
+      "expo-module-scripts/*": [
+        "node_modules/expo-module-scripts/*"
+      ],
       "@/*": [
         "./*"
       ]
