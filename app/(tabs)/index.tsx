@@ -28,6 +28,7 @@ import {
   uploadAvatarPublic,
   upsertMyProfile
 } from "../../services/profile";
+import { fetchRecommendedTrends } from "../../services/recommendations";
 import {
   fetchCommentEngagement,
   fetchTrendComments,
@@ -151,6 +152,8 @@ export default function HomeScreen() {
   const [placeResults, setPlaceResults] = useState<GooglePlaceResult[]>([]);
   const [placeSearchLoading, setPlaceSearchLoading] = useState(false);
   const [selectedPlace, setSelectedPlace] = useState<SelectedPlace | null>(null);
+  const [recommendedTrends, setRecommendedTrends] = useState<Trend[]>([]);
+  const [recommendedLoading, setRecommendedLoading] = useState(false);
 
   // Global loading (initial)
   const [initialLoading, setInitialLoading] = useState(true);
@@ -247,6 +250,24 @@ export default function HomeScreen() {
     setPlaceResults([]);
   }, []);
 
+  const loadRecommended = useCallback(async () => {
+    if (!session?.user) {
+      setRecommendedTrends([]);
+      return;
+    }
+
+    try {
+      setRecommendedLoading(true);
+      const data = await fetchRecommendedTrends();
+      setRecommendedTrends(data ?? []);
+    } catch (error: any) {
+      console.error("fetchRecommendedTrends error:", error);
+      Alert.alert("Error", error?.message ?? "Failed to load recommendations");
+    } finally {
+      setRecommendedLoading(false);
+    }
+  }, [session?.user?.id]);
+
   const handleClearSelectedPlace = useCallback(() => {
     setSelectedPlace(null);
   }, []);
@@ -258,6 +279,13 @@ export default function HomeScreen() {
   );
   const userPoints = profile?.points ?? 0;
   const userLevel = useMemo(() => getUserLevel(userPoints), [userPoints]);
+
+  const combinedTrendIds = useMemo(() => {
+    const ids = new Set<string>();
+    trends.forEach((t) => ids.add(t.id));
+    recommendedTrends.forEach((t) => ids.add(t.id));
+    return Array.from(ids);
+  }, [trends, recommendedTrends]);
 
   const fetchEngagementSnapshot = useCallback(
     async (trendIds: string[]) => {
@@ -278,7 +306,7 @@ export default function HomeScreen() {
 
   const applyEngagementSnapshot = useCallback(async () => {
     try {
-      const snapshot = await fetchEngagementSnapshot(trends.map((t) => t.id));
+      const snapshot = await fetchEngagementSnapshot(combinedTrendIds);
       setLikeCounts(snapshot.likeCounts);
       setCommentCounts(snapshot.commentCounts);
       setLikedTrendIds(snapshot.likedTrendIds);
@@ -287,7 +315,7 @@ export default function HomeScreen() {
     } catch (error) {
       console.error("fetchTrendEngagement error:", error);
     }
-  }, [fetchEngagementSnapshot, trends]);
+  }, [fetchEngagementSnapshot, combinedTrendIds]);
 
   useEffect(() => {
     engagementRefreshRef.current = applyEngagementSnapshot;
@@ -295,7 +323,7 @@ export default function HomeScreen() {
 
   useEffect(() => {
     let mounted = true;
-    const ids = trends.map((t) => t.id);
+    const ids = combinedTrendIds;
 
     (async () => {
       try {
@@ -315,7 +343,7 @@ export default function HomeScreen() {
     return () => {
       mounted = false;
     };
-  }, [trends, fetchEngagementSnapshot]);
+  }, [combinedTrendIds, fetchEngagementSnapshot]);
 
   useEffect(() => {
     const likeChannel = (supabase
@@ -383,6 +411,7 @@ export default function HomeScreen() {
           loadProfile(data.session.user.id),
           loadTrends(),
           loadLeaderboard(),
+          loadRecommended(),
         ]);
       }
       setInitialLoading(false);
@@ -396,10 +425,12 @@ export default function HomeScreen() {
         loadProfile(session.user.id);
         loadTrends();
         loadLeaderboard();
+        loadRecommended();
       } else {
         setProfile(null);
         setTrends([]);
         setLeaderboard([]);
+        setRecommendedTrends([]);
       }
     });
 
@@ -1684,6 +1715,49 @@ export default function HomeScreen() {
           )}
         </Pressable>
       </View>
+
+      {session?.user && (
+        <View style={[styles.card, { borderColor: colors.border }]}> 
+          <View style={styles.rowBetween}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>🤖 Recommended for you</Text>
+            <Pressable
+              onPress={loadRecommended}
+              disabled={recommendedLoading}
+              style={[
+                styles.button,
+                {
+                  backgroundColor: colors.buttonBg,
+                  paddingHorizontal: 12,
+                  paddingVertical: 6,
+                  opacity: recommendedLoading ? 0.7 : 1,
+                },
+              ]}
+            >
+              {recommendedLoading ? (
+                <ActivityIndicator color={colors.buttonText} size="small" />
+              ) : (
+                <Text style={[styles.buttonText, { color: colors.buttonText, fontSize: 12 }]}>Refresh</Text>
+              )}
+            </Pressable>
+          </View>
+
+          {recommendedLoading && recommendedTrends.length === 0 ? (
+            <ActivityIndicator color={colors.sub} style={{ marginTop: 12 }} />
+          ) : recommendedTrends.length === 0 ? (
+            <Text style={{ color: colors.sub, marginTop: 8 }}>
+              Like more trends to train your recommendations.
+            </Text>
+          ) : (
+            <FlatList
+              data={recommendedTrends}
+              keyExtractor={(item) => item.id}
+              renderItem={renderTrendItem}
+              scrollEnabled={false}
+              contentContainerStyle={{ paddingTop: 8 }}
+            />
+          )}
+        </View>
+      )}
 
       {/* Trends List */}
       <View

@@ -161,6 +161,50 @@ CREATE POLICY "Users can delete their own trend likes"
   ON trend_likes FOR DELETE
   USING (auth.uid() = user_id);
 
+-- 13b. Collaborative filtering RPC for recommendations
+CREATE OR REPLACE FUNCTION recommended_trends()
+RETURNS TABLE (
+  id uuid,
+  title text,
+  category text,
+  location text,
+  latitude double precision,
+  longitude double precision,
+  created_at timestamptz,
+  user_id uuid,
+  lat double precision,
+  lng double precision
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT t.id,
+         t.title,
+         t.category,
+         t.location,
+         t.latitude,
+         t.longitude,
+         t.created_at,
+         t.user_id,
+         t.lat,
+         t.lng
+  FROM trends t
+  WHERE t.id IN (
+    SELECT DISTINCT tl_sim.trend_id
+    FROM trend_likes tl_self
+    JOIN trend_likes tl_match ON tl_self.trend_id = tl_match.trend_id
+      AND tl_self.user_id = auth.uid()
+      AND tl_match.user_id <> auth.uid()
+    JOIN trend_likes tl_sim ON tl_sim.user_id = tl_match.user_id
+  )
+  AND t.id NOT IN (
+    SELECT trend_id FROM trend_likes WHERE user_id = auth.uid()
+  )
+  ORDER BY t.created_at DESC
+  LIMIT 10;
+$$;
+
 -- 13. Create RLS policies for trend_comments
 CREATE POLICY "Anyone can view trend comments"
   ON trend_comments FOR SELECT
