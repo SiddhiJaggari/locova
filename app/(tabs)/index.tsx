@@ -21,6 +21,7 @@ import {
 
 import ProfileEditor from "../../components/ProfileEditor";
 import { supabase } from "../../lib/supabase";
+import { GooglePlaceResult, searchPlaces } from "../../services/places";
 import {
   getMyProfile,
   // savePushTokenToProfile, // Disabled for Expo Go
@@ -104,6 +105,14 @@ type SaveProfileParams = {
   avatarUrl: string | null; // URI from ProfileEditor
 };
 
+type SelectedPlace = {
+  placeId: string;
+  name: string;
+  address?: string;
+  lat: number | null;
+  lng: number | null;
+};
+
 export default function HomeScreen() {
   // Auth
   const [session, setSession] = useState<Session | null>(null);
@@ -139,6 +148,9 @@ export default function HomeScreen() {
   const [likeBusyMap, setLikeBusyMap] = useState<Record<string, boolean>>({});
   const [saveBusyMap, setSaveBusyMap] = useState<Record<string, boolean>>({});
   const [commentLikeBusyMap, setCommentLikeBusyMap] = useState<Record<string, boolean>>({});
+  const [placeResults, setPlaceResults] = useState<GooglePlaceResult[]>([]);
+  const [placeSearchLoading, setPlaceSearchLoading] = useState(false);
+  const [selectedPlace, setSelectedPlace] = useState<SelectedPlace | null>(null);
 
   // Global loading (initial)
   const [initialLoading, setInitialLoading] = useState(true);
@@ -160,17 +172,84 @@ export default function HomeScreen() {
 
   // Refs for realtime handlers
   const engagementRefreshRef = useRef<(() => Promise<void>) | null>(null);
-  const loadTrendCommentsRef = useRef<((trendId: string) => Promise<void>) | null>(null);
-  const activeCommentTrendIdRef = useRef(activeCommentTrendId);
-  const commentsVisibleRef = useRef(commentsVisible);
+  const loadTrendCommentsRef = useRef<typeof loadTrendComments | null>(null);
+  const activeCommentTrendIdRef = useRef<string | null>(null);
+  const commentsVisibleRef = useRef<boolean>(false);
+  const placeSearchAbortRef = useRef<AbortController | null>(null);
+  const placeSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     activeCommentTrendIdRef.current = activeCommentTrendId;
   }, [activeCommentTrendId]);
 
   useEffect(() => {
-    commentsVisibleRef.current = commentsVisible;
-  }, [commentsVisible]);
+    if (selectedPlace && newLocationText.trim() !== selectedPlace.name) {
+      setSelectedPlace(null);
+    }
+  }, [newLocationText, selectedPlace]);
+
+  useEffect(() => {
+    const query = newLocationText.trim();
+    if (query.length < 3) {
+      placeSearchAbortRef.current?.abort();
+      if (placeSearchDebounceRef.current) {
+        clearTimeout(placeSearchDebounceRef.current);
+        placeSearchDebounceRef.current = null;
+      }
+      setPlaceResults([]);
+      setPlaceSearchLoading(false);
+      return;
+    }
+
+    if (placeSearchDebounceRef.current) {
+      clearTimeout(placeSearchDebounceRef.current);
+    }
+
+    const controller = new AbortController();
+    placeSearchAbortRef.current?.abort();
+    placeSearchAbortRef.current = controller;
+
+    placeSearchDebounceRef.current = setTimeout(async () => {
+      try {
+        setPlaceSearchLoading(true);
+        const results = await searchPlaces(query, controller.signal);
+        setPlaceResults(results.slice(0, 5));
+      } catch (error: any) {
+        if (error?.name !== "AbortError") {
+          console.error("searchPlaces error:", error);
+        }
+      } finally {
+        setPlaceSearchLoading(false);
+        placeSearchDebounceRef.current = null;
+      }
+    }, 400);
+
+    return () => {
+      controller.abort();
+      if (placeSearchDebounceRef.current) {
+        clearTimeout(placeSearchDebounceRef.current);
+        placeSearchDebounceRef.current = null;
+      }
+    };
+  }, [newLocationText]);
+
+  const handleSelectPlace = useCallback((place: GooglePlaceResult) => {
+    const lat = place.geometry?.location?.lat ?? null;
+    const lng = place.geometry?.location?.lng ?? null;
+    setSelectedPlace({
+      placeId: place.place_id,
+      name: place.name,
+      address: place.formatted_address,
+      lat,
+      lng,
+    });
+    setNewLocationText(place.name);
+    setPlaceResults([]);
+  }, []);
+
+  const handleClearSelectedPlace = useCallback(() => {
+    setSelectedPlace(null);
+  }, []);
 
   const currentUserId = session?.user?.id ?? null;
   const activeTrend = useMemo(
@@ -625,6 +704,10 @@ export default function HomeScreen() {
     }
   }, [currentUserId]);
 
+  useEffect(() => {
+    loadTrendCommentsRef.current = loadTrendComments;
+  }, [loadTrendComments]);
+
   const handleOpenComments = useCallback(
     (trendId: string) => {
       setActiveCommentTrendId(trendId);
@@ -871,18 +954,23 @@ export default function HomeScreen() {
       setTrendSubmitting(true);
 
       const baseLocation = trimmedLocation ? trimmedLocation : currentCity || "Unknown";
+      const locationLabel = selectedPlace
+        ? selectedPlace.address
+          ? `${selectedPlace.name} • ${selectedPlace.address}`
+          : selectedPlace.name
+        : baseLocation;
 
       const insertPayload: any = {
         title: trimmedTitle,
         category: trimmedCategory,
-        location: baseLocation,
+        location: locationLabel,
         user_id: session.user.id,
       };
 
-      let resolvedLat = currentLat;
-      let resolvedLng = currentLng;
+      let resolvedLat = selectedPlace?.lat ?? currentLat;
+      let resolvedLng = selectedPlace?.lng ?? currentLng;
 
-      if (resolvedLat == null || resolvedLng == null) {
+      if (!selectedPlace && (resolvedLat == null || resolvedLng == null)) {
         try {
           const { status } = await Location.requestForegroundPermissionsAsync();
           if (status === "granted") {
@@ -902,7 +990,6 @@ export default function HomeScreen() {
       if (resolvedLat != null && resolvedLng != null) {
         insertPayload.latitude = resolvedLat;
         insertPayload.longitude = resolvedLng;
-        // Retain legacy columns to keep compatibility with existing queries
         insertPayload.lat = resolvedLat;
         insertPayload.lng = resolvedLng;
       }
@@ -927,6 +1014,8 @@ export default function HomeScreen() {
       await Promise.all([loadTrends(), loadProfile(session.user.id)]);
 
       setNewTitle("");
+      setSelectedPlace(null);
+      setPlaceResults([]);
       Alert.alert("Trend posted", "Thanks for sharing a trend!");
     } catch (e: any) {
       console.error("handleAddTrend error:", e);
@@ -942,6 +1031,7 @@ export default function HomeScreen() {
     currentLat,
     currentLng,
     currentCity,
+    selectedPlace,
     loadTrends,
     loadProfile,
   ]);
@@ -1527,6 +1617,47 @@ export default function HomeScreen() {
           onChangeText={setNewLocationText}
         />
 
+        {placeSearchLoading && (
+          <View style={styles.inlineStatusRow}>
+            <ActivityIndicator color={colors.sub} size="small" />
+            <Text style={{ color: colors.sub, marginLeft: 6, fontSize: 12 }}>Searching places…</Text>
+          </View>
+        )}
+
+        {selectedPlace && (
+          <View style={[styles.selectedPlaceCard, { borderColor: colors.border }]}> 
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: colors.text, fontWeight: "600" }}>📍 {selectedPlace.name}</Text>
+              {selectedPlace.address && (
+                <Text style={{ color: colors.sub, fontSize: 12 }}>{selectedPlace.address}</Text>
+              )}
+            </View>
+            <Pressable onPress={handleClearSelectedPlace}>
+              <Text style={{ color: colors.danger, fontWeight: "600" }}>Clear</Text>
+            </Pressable>
+          </View>
+        )}
+
+        {placeResults.length > 0 && (
+          <View style={[styles.placeResultsContainer, { borderColor: colors.border, backgroundColor: colors.cardBg }]}> 
+            {placeResults.map((place) => (
+              <Pressable
+                key={place.place_id}
+                onPress={() => handleSelectPlace(place)}
+                style={styles.placeResultRow}
+              >
+                <Text style={{ color: colors.text, fontWeight: "600" }}>{place.name}</Text>
+                {place.formatted_address && (
+                  <Text style={{ color: colors.sub, fontSize: 12 }}>{place.formatted_address}</Text>
+                )}
+              </Pressable>
+            ))}
+            <Text style={{ color: colors.sub, fontSize: 11, marginTop: 4, textAlign: "right" }}>
+              Places data by Google
+            </Text>
+          </View>
+        )}
+
         <Pressable
           onPress={handleAddTrend}
           disabled={trendSubmitting}
@@ -1919,6 +2050,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 8,
   },
+  inlineStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+  },
   rowBetween: {
     flexDirection: "row",
     alignItems: "center",
@@ -2043,6 +2179,26 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: "center",
     justifyContent: "center",
+  },
+  selectedPlaceCard: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  placeResultsContainer: {
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    marginTop: 10,
+  },
+  placeResultRow: {
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
   },
   levelBadge: {
     flexDirection: "row",
