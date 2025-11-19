@@ -2,6 +2,7 @@
 import { RealtimePostgresChangesPayload, Session } from "@supabase/supabase-js";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
+import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -91,14 +92,21 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
 }
 
 const colors = {
-  bg: "#050816",
-  cardBg: "#0b1120",
-  text: "#f9fafb",
-  sub: "#9ca3af",
-  border: "#1f2937",
-  buttonBg: "#2563eb",
-  buttonText: "#f9fafb",
+  bg: "#0a0e27",
+  cardBg: "rgba(15, 23, 42, 0.6)",
+  cardBorder: "rgba(99, 102, 241, 0.2)",
+  text: "#f1f5f9",
+  sub: "#94a3b8",
+  border: "rgba(148, 163, 184, 0.1)",
+  primary: "#6366f1",
+  primaryLight: "#818cf8",
+  secondary: "#8b5cf6",
+  accent: "#06b6d4",
+  success: "#10b981",
   danger: "#ef4444",
+  warning: "#f59e0b",
+  gradientStart: "#6366f1",
+  gradientEnd: "#8b5cf6",
 };
 
 type SaveProfileParams = {
@@ -1116,12 +1124,17 @@ export default function HomeScreen() {
     const saveBusy = !!saveBusyMap[item.id];
 
     return (
-      <View style={[styles.trendCard, { borderColor: colors.border }]}>
-        <Text style={[styles.trendTitle, { color: colors.text }]}>
+      <View style={[styles.trendCard, { borderColor: colors.cardBorder }]}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <View style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: colors.primary + "30", borderRadius: 12, borderWidth: 1, borderColor: colors.primary + "50" }}>
+            <Text style={{ color: colors.primaryLight, fontSize: 11, fontWeight: "700" }}>{item.category.toUpperCase()}</Text>
+          </View>
+        </View>
+        <Text style={[styles.trendTitle, { color: colors.text, fontSize: 18, marginBottom: 6 }]}>
           {item.title}
         </Text>
-        <Text style={{ color: colors.sub, marginBottom: 2 }}>
-          {item.category} · {item.location}
+        <Text style={{ color: colors.sub, marginBottom: 4, fontSize: 13 }}>
+          📍 {item.location}
         </Text>
         {typeof item.distance_km === "number" && (
           <Text style={{ color: colors.sub }}>
@@ -1139,8 +1152,8 @@ export default function HomeScreen() {
             style={[
               styles.trendActionButton,
               {
-                borderColor: liked ? "#2563eb" : colors.border,
-                backgroundColor: liked ? "#2563eb22" : "transparent",
+                borderColor: liked ? colors.primary : colors.cardBorder,
+                backgroundColor: liked ? colors.primary + "20" : "rgba(15, 23, 42, 0.3)",
                 opacity: likeBusy ? 0.65 : 1,
               },
             ]}
@@ -1158,7 +1171,7 @@ export default function HomeScreen() {
 
           <Pressable
             onPress={() => handleOpenComments(item.id)}
-            style={[styles.trendActionButton, { borderColor: colors.border }]}
+            style={[styles.trendActionButton, { borderColor: colors.cardBorder, backgroundColor: "rgba(15, 23, 42, 0.3)" }]}
           >
             <Text style={{ color: colors.text, fontWeight: "600" }}>💬 Comment</Text>
             <Text style={{ color: colors.sub, fontSize: 12 }}>
@@ -1172,8 +1185,8 @@ export default function HomeScreen() {
             style={[
               styles.trendActionButton,
               {
-                borderColor: saved ? "#fbbf24" : colors.border,
-                backgroundColor: saved ? "#fbbf2422" : "transparent",
+                borderColor: saved ? colors.warning : colors.cardBorder,
+                backgroundColor: saved ? colors.warning + "20" : "rgba(15, 23, 42, 0.3)",
                 opacity: saveBusy ? 0.65 : 1,
               },
             ]}
@@ -1239,7 +1252,15 @@ export default function HomeScreen() {
       <View
         style={[
           styles.lbRow,
-          { borderColor: colors.border, backgroundColor: isYou ? "#0ea5e922" : "transparent" },
+          { 
+            borderColor: isYou ? colors.accent : colors.cardBorder, 
+            backgroundColor: isYou ? colors.accent + "15" : "rgba(15, 23, 42, 0.3)",
+            shadowColor: isYou ? colors.accent : "transparent",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: isYou ? 0.3 : 0,
+            shadowRadius: 8,
+            elevation: isYou ? 3 : 0,
+          },
         ]}
       >
         <Text style={{ color: colors.text, fontWeight: "800", width: 28, textAlign: "right" }}>#{index + 1}</Text>
@@ -1302,12 +1323,15 @@ export default function HomeScreen() {
   if (!session) {
     return (
       <View style={styles.screen}>
-        <Text style={[styles.title, { color: colors.text }]}>
-          Locova
-        </Text>
-        <Text style={[styles.subtitle, { color: colors.sub }]}>
-          Discover & share local trends
-        </Text>
+        <View style={{ marginBottom: 24 }}>
+          <Text style={[styles.title, { color: colors.text, fontSize: 36, letterSpacing: 1 }]}>
+            ✨ Locova
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.sub, fontSize: 15, marginTop: 8 }]}>
+            Discover & share local trends
+          </Text>
+          <View style={{ height: 3, width: 60, backgroundColor: colors.primary, borderRadius: 2, marginTop: 12, opacity: 0.8 }} />
+        </View>
 
         <View
           style={[styles.card, { borderColor: colors.border }]}
@@ -1341,24 +1365,28 @@ export default function HomeScreen() {
 
           <Pressable
             onPress={isLoginMode ? handleSignIn : handleSignUp}
-            style={[
-              styles.button,
-              { backgroundColor: colors.buttonBg, marginTop: 8 },
-            ]}
             disabled={authLoading}
+            style={{ marginTop: 12 }}
           >
-            {authLoading ? (
-              <ActivityIndicator color={colors.buttonText} />
-            ) : (
-              <Text
-                style={[
-                  styles.buttonText,
-                  { color: colors.buttonText },
-                ]}
-              >
-                {isLoginMode ? "Log In" : "Create Account"}
-              </Text>
-            )}
+            <LinearGradient
+              colors={[colors.gradientStart, colors.gradientEnd]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={[styles.button, { opacity: authLoading ? 0.7 : 1 }]}
+            >
+              {authLoading ? (
+                <ActivityIndicator color={colors.text} />
+              ) : (
+                <Text
+                  style={[
+                    styles.buttonText,
+                    { color: colors.text, fontSize: 16 },
+                  ]}
+                >
+                  {isLoginMode ? "Log In" : "Create Account"}
+                </Text>
+              )}
+            </LinearGradient>
           </Pressable>
 
           <Pressable
@@ -1388,10 +1416,10 @@ export default function HomeScreen() {
       >
       <View style={styles.headerRow}>
         <View>
-          <Text style={[styles.title, { color: colors.text }]}>
-            Locova
+          <Text style={[styles.title, { color: colors.text, fontSize: 32, letterSpacing: 0.5 }]}>
+            ✨ Locova
           </Text>
-          <Text style={[styles.subtitle, { color: colors.sub }]}>
+          <Text style={[styles.subtitle, { color: colors.sub, fontSize: 14, marginTop: 6 }]}>
             Hey {profile?.display_name || "Explorer"} 👋
           </Text>
         </View>
@@ -1503,10 +1531,10 @@ export default function HomeScreen() {
                 }}
                 style={[
                   styles.button,
-                  { backgroundColor: colors.buttonBg, paddingVertical: 8 },
+                  { backgroundColor: colors.primary, paddingVertical: 8 },
                 ]}
               >
-                <Text style={[styles.buttonText, { color: colors.buttonText, fontSize: 12 }]}>
+                <Text style={[styles.buttonText, { color: colors.text, fontSize: 12 }]}>
                   Test Notifications
                 </Text>
               </Pressable>
@@ -1554,19 +1582,19 @@ export default function HomeScreen() {
             style={[
               styles.button,
               {
-                backgroundColor: colors.buttonBg,
+                backgroundColor: colors.primary,
                 marginRight: 8,
                 flex: 1,
               },
             ]}
           >
             {locationLoading ? (
-              <ActivityIndicator color={colors.buttonText} />
+              <ActivityIndicator color={colors.text} />
             ) : (
               <Text
                 style={[
                   styles.buttonText,
-                  { color: colors.buttonText },
+                  { color: colors.text },
                 ]}
               >
                 Use my location
@@ -1597,7 +1625,7 @@ export default function HomeScreen() {
           <Text
             style={[
               styles.buttonText,
-              { color: colors.buttonText },
+              { color: colors.text },
             ]}
           >
             Load trends within radius
@@ -1692,27 +1720,27 @@ export default function HomeScreen() {
         <Pressable
           onPress={handleAddTrend}
           disabled={trendSubmitting}
-          style={[
-            styles.button,
-            {
-              backgroundColor: colors.buttonBg,
-              marginTop: 6,
-              opacity: trendSubmitting ? 0.7 : 1,
-            },
-          ]}
+          style={{ marginTop: 12 }}
         >
-          {trendSubmitting ? (
-            <ActivityIndicator color={colors.buttonText} />
-          ) : (
-            <Text
-              style={[
-                styles.buttonText,
-                { color: colors.buttonText },
-              ]}
-            >
-              Post Trend & Earn Points
-            </Text>
-          )}
+          <LinearGradient
+            colors={[colors.gradientStart, colors.gradientEnd]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.button, { opacity: trendSubmitting ? 0.7 : 1 }]}
+          >
+            {trendSubmitting ? (
+              <ActivityIndicator color={colors.text} />
+            ) : (
+              <Text
+                style={[
+                  styles.buttonText,
+                  { color: colors.text, fontSize: 15 },
+                ]}
+              >
+                🚀 Post Trend & Earn Points
+              </Text>
+            )}
+          </LinearGradient>
         </Pressable>
       </View>
 
@@ -1726,7 +1754,7 @@ export default function HomeScreen() {
               style={[
                 styles.button,
                 {
-                  backgroundColor: colors.buttonBg,
+                  backgroundColor: colors.primary,
                   paddingHorizontal: 12,
                   paddingVertical: 6,
                   opacity: recommendedLoading ? 0.7 : 1,
@@ -1734,9 +1762,9 @@ export default function HomeScreen() {
               ]}
             >
               {recommendedLoading ? (
-                <ActivityIndicator color={colors.buttonText} size="small" />
+                <ActivityIndicator color={colors.text} size="small" />
               ) : (
-                <Text style={[styles.buttonText, { color: colors.buttonText, fontSize: 12 }]}>Refresh</Text>
+                <Text style={[styles.buttonText, { color: colors.text, fontSize: 12 }]}>Refresh</Text>
               )}
             </Pressable>
           </View>
@@ -1779,7 +1807,7 @@ export default function HomeScreen() {
             >
               <Text
                 style={{
-                  color: trendsScope === "global" ? colors.buttonText : colors.sub,
+                  color: trendsScope === "global" ? colors.text : colors.sub,
                   fontWeight: "600",
                 }}
               >
@@ -1795,7 +1823,7 @@ export default function HomeScreen() {
             >
               <Text
                 style={{
-                  color: trendsScope === "nearby" ? colors.buttonText : colors.sub,
+                  color: trendsScope === "nearby" ? colors.text : colors.sub,
                   fontWeight: "600",
                 }}
               >
@@ -1863,7 +1891,7 @@ export default function HomeScreen() {
           >
             <Text
               style={{
-                color: leaderboardScope === "global" ? colors.buttonText : colors.sub,
+                color: leaderboardScope === "global" ? colors.text : colors.sub,
                 fontWeight: "600",
               }}
             >
@@ -1879,7 +1907,7 @@ export default function HomeScreen() {
           >
             <Text
               style={{
-                color: leaderboardScope === "nearby" ? colors.buttonText : colors.sub,
+                color: leaderboardScope === "nearby" ? colors.text : colors.sub,
                 fontWeight: "600",
               }}
             >
@@ -2038,15 +2066,15 @@ export default function HomeScreen() {
                 style={[
                   styles.commentPostButton,
                   {
-                    backgroundColor: colors.buttonBg,
+                    backgroundColor: colors.primary,
                     opacity: postingComment ? 0.7 : 1,
                   },
                 ]}
               >
                 {postingComment ? (
-                  <ActivityIndicator color={colors.buttonText} />
+                  <ActivityIndicator color={colors.text} />
                 ) : (
-                  <Text style={{ color: colors.buttonText, fontWeight: "700" }}>Post</Text>
+                  <Text style={{ color: colors.text, fontWeight: "700" }}>Post</Text>
                 )}
               </Pressable>
             </View>
@@ -2085,10 +2113,16 @@ const styles = StyleSheet.create({
   },
   card: {
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 12,
-    marginBottom: 14,
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 16,
     backgroundColor: colors.cardBg,
+    borderColor: colors.cardBorder,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 5,
   },
   sectionTitle: {
     fontSize: 18,
@@ -2097,10 +2131,12 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginTop: 8,
+    backgroundColor: "rgba(15, 23, 42, 0.4)",
+    borderColor: colors.cardBorder,
   },
   inputSmall: {
     borderWidth: 1,
@@ -2110,11 +2146,16 @@ const styles = StyleSheet.create({
     width: 90,
   },
   button: {
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 3,
   },
   buttonText: {
     fontWeight: "700",
@@ -2141,14 +2182,20 @@ const styles = StyleSheet.create({
   },
   scopeToggleButton: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.cardBorder,
     borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: "rgba(15, 23, 42, 0.3)",
   },
   scopeToggleButtonActive: {
-    backgroundColor: colors.buttonBg,
-    borderColor: colors.buttonBg,
+    backgroundColor: colors.primary,
+    borderColor: colors.primaryLight,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    elevation: 3,
   },
   liveBadge: {
     borderWidth: 1,
@@ -2160,9 +2207,16 @@ const styles = StyleSheet.create({
   },
   trendCard: {
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 10,
-    marginBottom: 8,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+    backgroundColor: colors.cardBg,
+    borderColor: colors.cardBorder,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 4,
   },
   trendTitle: {
     fontSize: 16,
@@ -2171,9 +2225,9 @@ const styles = StyleSheet.create({
   },
   lbRow: {
     borderWidth: 1,
-    borderRadius: 10,
-    padding: 8,
-    marginBottom: 6,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 10,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -2186,17 +2240,19 @@ const styles = StyleSheet.create({
   trendActionButton: {
     flex: 1,
     borderWidth: 1,
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     alignItems: "flex-start",
     justifyContent: "center",
   },
   commentBubble: {
     borderWidth: 1,
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 8,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    backgroundColor: colors.cardBg,
+    borderColor: colors.cardBorder,
   },
   commentMeta: {
     marginTop: 6,
