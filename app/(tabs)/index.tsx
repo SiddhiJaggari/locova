@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Image,
   Modal,
@@ -128,6 +129,40 @@ type SelectedPlace = {
   lng: number | null;
 };
 
+// Animated Button Component
+const AnimatedPressable = ({ children, onPress, style, disabled }: any) => {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.95,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 3,
+      tension: 40,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      disabled={disabled}
+    >
+      <Animated.View style={[style, { transform: [{ scale: scaleAnim }] }]}>
+        {children}
+      </Animated.View>
+    </Pressable>
+  );
+};
+
 export default function HomeScreen() {
   // Auth
   const [session, setSession] = useState<Session | null>(null);
@@ -171,6 +206,10 @@ export default function HomeScreen() {
 
   // Global loading (initial)
   const [initialLoading, setInitialLoading] = useState(true);
+
+  // Animations
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(50)).current;
 
   // Trend engagement
   const [likeCounts, setLikeCounts] = useState<Record<string, number>>({});
@@ -429,6 +468,21 @@ export default function HomeScreen() {
         ]);
       }
       setInitialLoading(false);
+      
+      // Trigger entrance animations
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          tension: 50,
+          friction: 7,
+          useNativeDriver: true,
+        }),
+      ]).start();
     })();
 
     const {
@@ -1395,6 +1449,12 @@ export default function HomeScreen() {
         style={{ flex: 1, backgroundColor: colors.bg }}
         contentContainerStyle={styles.scrollContent}
       >
+      <Animated.View 
+        style={{
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }],
+        }}
+      >
       <View style={styles.headerRow}>
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
@@ -1508,7 +1568,7 @@ export default function HomeScreen() {
         </Text>
 
         <View style={styles.row}>
-          <Pressable
+          <AnimatedPressable
             onPress={handleGetLocation}
             disabled={locationLoading}
             style={[
@@ -1532,7 +1592,7 @@ export default function HomeScreen() {
                 Use my location
               </Text>
             )}
-          </Pressable>
+          </AnimatedPressable>
 
           <TextInput
             style={[
@@ -1547,7 +1607,7 @@ export default function HomeScreen() {
           />
         </View>
 
-        <Pressable
+        <AnimatedPressable
           onPress={() => handleChangeTrendsScope("nearby")}
           style={{
             backgroundColor: colors.text,
@@ -1569,7 +1629,7 @@ export default function HomeScreen() {
           <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 15 }}>
             Search Nearby Trends
           </Text>
-        </Pressable>
+        </AnimatedPressable>
       </View>
 
       {/* Add Trend */}
@@ -1654,7 +1714,7 @@ export default function HomeScreen() {
           </View>
         )}
 
-        <Pressable
+        <AnimatedPressable
           onPress={handleAddTrend}
           disabled={trendSubmitting}
           style={{ marginTop: 12 }}
@@ -1681,7 +1741,7 @@ export default function HomeScreen() {
               </View>
             )}
           </LinearGradient>
-        </Pressable>
+        </AnimatedPressable>
       </View>
 
       {session?.user && (
@@ -1936,6 +1996,7 @@ export default function HomeScreen() {
             </View>
           )}
       </View>
+      </Animated.View>
       </ScrollView>
 
       <Modal
