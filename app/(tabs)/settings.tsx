@@ -1,5 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Session } from "@supabase/supabase-js";
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -63,7 +64,7 @@ export default function SettingsScreen() {
       
       if (data.session?.user) {
         const { data: profileData } = await supabase
-          .from("profiles")
+          .from("user_profiles")
           .select("*")
           .eq("id", data.session.user.id)
           .single();
@@ -93,7 +94,7 @@ export default function SettingsScreen() {
   const handlePickAvatar = useCallback(async () => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -134,34 +135,118 @@ export default function SettingsScreen() {
 
     try {
       setSaveLoading(true);
-      const { error } = await supabase
-        .from("profiles")
+      let finalAvatarUrl = avatarUrl;
+
+      // If avatar is a local file, upload it first
+      if (avatarUrl && (avatarUrl.startsWith('file://') || avatarUrl.startsWith('content://'))) {
+        try {
+          // Create unique filename
+          const fileExt = avatarUrl.split('.').pop() || 'jpg';
+          const fileName = `${session.user.id}-${Date.now()}.${fileExt}`;
+          const filePath = `${fileName}`;
+
+          // Read file as base64 using FileSystem
+          const base64 = await FileSystem.readAsStringAsync(avatarUrl, {
+            encoding: 'base64',
+          });
+
+          // Convert base64 to binary
+          const binaryString = atob(base64);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+
+          // Upload to Supabase Storage
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('avatars')
+            .upload(filePath, bytes.buffer, {
+              contentType: 'image/jpeg',
+              upsert: true,
+            });
+
+          if (uploadError) {
+            console.error('Upload error:', uploadError);
+            throw uploadError;
+          }
+
+          // Get public URL
+          const { data: urlData } = supabase.storage
+            .from('avatars')
+            .getPublicUrl(filePath);
+
+          finalAvatarUrl = urlData.publicUrl;
+        } catch (uploadErr: any) {
+          console.error('Avatar upload failed:', uploadErr);
+          Alert.alert('Upload Failed', uploadErr?.message || 'Could not upload avatar');
+          finalAvatarUrl = profile?.avatar_url || null;
+        }
+      }
+
+      // Update profile in database
+      console.log('Updating profile for user:', session.user.id);
+      console.log('Display name:', displayName);
+      console.log('Avatar URL:', finalAvatarUrl);
+      
+      const { data: updateData, error } = await supabase
+        .from("user_profiles")
         .update({
           display_name: displayName || null,
-          avatar_url: avatarUrl,
+          avatar_url: finalAvatarUrl,
         })
-        .eq("id", session.user.id);
+        .eq("id", session.user.id)
+        .select();
 
-      if (error) throw error;
+      console.log('Update result:', updateData);
+      console.log('Update error:', error);
+
+      if (error) {
+        console.error('Profile update error:', error);
+        Alert.alert("Error", `Failed to update: ${error.message}`);
+        throw error;
+      }
+
+      if (!updateData || updateData.length === 0) {
+        console.warn('No rows updated - profile might not exist');
+        Alert.alert("Warning", "Profile not found. Creating new profile...");
+        
+        // Try to insert instead
+        const { error: insertError } = await supabase
+          .from("user_profiles")
+          .insert({
+            id: session.user.id,
+            display_name: displayName || null,
+            avatar_url: finalAvatarUrl,
+            points: 0,
+          });
+        
+        if (insertError) {
+          console.error('Profile insert error:', insertError);
+          throw insertError;
+        }
+      }
 
       Alert.alert("Success", "Profile updated successfully!");
       
       // Refresh profile
       const { data: profileData } = await supabase
-        .from("profiles")
+        .from("user_profiles")
         .select("*")
         .eq("id", session.user.id)
         .single();
       
       if (profileData) {
         setProfile(profileData);
+        setDisplayName(profileData.display_name || "");
+        setAvatarUrl(profileData.avatar_url);
       }
     } catch (error: any) {
+      console.error('Save profile error:', error);
       Alert.alert("Error", error?.message ?? "Failed to save profile");
     } finally {
       setSaveLoading(false);
     }
-  }, [session, displayName, avatarUrl]);
+  }, [session, displayName, avatarUrl, profile]);
 
   const handleLogout = useCallback(async () => {
     try {
