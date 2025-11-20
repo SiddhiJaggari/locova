@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import * as Location from "expo-location";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
@@ -120,13 +121,20 @@ export default function TrendMap() {
       <View style={styles.overlay} pointerEvents="box-none">
         {(locationError || loadingTrends) && (
           <View style={styles.statusChip}>
-            <Text style={styles.statusText}>
-              {locationError ?? "Loading trends…"}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              {loadingTrends && <ActivityIndicator size="small" color="#6ECFD9" />}
+              {locationError && <Ionicons name="warning-outline" size={16} color="#FF6B7A" />}
+              <Text style={styles.statusText}>
+                {locationError ?? "Loading trends…"}
+              </Text>
+            </View>
           </View>
         )}
         <Pressable style={styles.refreshButton} onPress={handleRefresh}>
-          <Text style={styles.refreshButtonText}>Refresh</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+            <Ionicons name="refresh" size={18} color="#FFFFFF" />
+            <Text style={styles.refreshButtonText}>Refresh</Text>
+          </View>
         </Pressable>
       </View>
     </View>
@@ -145,10 +153,12 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#F0F9FA",
   },
   loadingText: {
     marginTop: 12,
     fontSize: 16,
+    color: "#5A7B7E",
   },
   overlay: {
     position: "absolute",
@@ -160,22 +170,35 @@ const styles = StyleSheet.create({
   },
   statusChip: {
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: "rgba(0,0,0,0.6)",
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
+    borderWidth: 0,
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
   },
   statusText: {
-    color: "#fff",
+    color: "#1A3B3F",
     fontWeight: "600",
+    fontSize: 13,
   },
   refreshButton: {
     paddingHorizontal: 18,
     paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: "#2563eb",
+    backgroundColor: "#FF6B7A",
+    shadowColor: "#FF6B7A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 6,
   },
   refreshButtonText: {
-    color: "#fff",
+    color: "#FFFFFF",
     fontWeight: "700",
+    fontSize: 14,
   },
 });

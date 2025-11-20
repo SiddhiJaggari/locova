@@ -1,4 +1,5 @@
 // app/(tabs)/index.tsx
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { RealtimePostgresChangesPayload, Session } from "@supabase/supabase-js";
 import Constants from "expo-constants";
 import * as Device from "expo-device";
@@ -20,14 +21,10 @@ import {
   View,
 } from "react-native";
 
-import ProfileEditor from "../../components/ProfileEditor";
 import { supabase } from "../../lib/supabase";
 import { GooglePlaceResult, searchPlaces } from "../../services/places";
 import {
-  getMyProfile,
-  // savePushTokenToProfile, // Disabled for Expo Go
-  uploadAvatarPublic,
-  upsertMyProfile
+  getMyProfile
 } from "../../services/profile";
 import { fetchRecommendedTrends } from "../../services/recommendations";
 import {
@@ -91,27 +88,36 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
   }
 }
 
+// Professional Light Theme - Cool Aqua & Rose Red
 const colors = {
-  bg: "#0a0e27",
-  cardBg: "rgba(15, 23, 42, 0.6)",
-  cardBorder: "rgba(99, 102, 241, 0.2)",
-  text: "#f1f5f9",
-  sub: "#94a3b8",
-  border: "rgba(148, 163, 184, 0.1)",
-  primary: "#6366f1",
-  primaryLight: "#818cf8",
-  secondary: "#8b5cf6",
-  accent: "#06b6d4",
-  success: "#10b981",
-  danger: "#ef4444",
-  warning: "#f59e0b",
-  gradientStart: "#6366f1",
-  gradientEnd: "#8b5cf6",
-};
-
-type SaveProfileParams = {
-  displayName: string;
-  avatarUrl: string | null; // URI from ProfileEditor
+  // Backgrounds
+  bg: "#F0F9FA",              // Light aqua/mint
+  cardBg: "#FFFFFF",          // Pure white
+  
+  // Text
+  text: "#1A3B3F",            // Deep teal
+  sub: "#5A7B7E",             // Muted teal
+  
+  // Borders & Dividers
+  border: "#D4E8EA",          // Soft aqua border
+  cardBorder: "#D4E8EA",
+  
+  // Primary - Rose Red
+  primary: "#FF6B7A",         // Rose red
+  primaryLight: "#FFB3BC",    // Light rose
+  
+  // Secondary - Aqua
+  secondary: "#6ECFD9",       // Bright aqua
+  accent: "#6ECFD9",          // Aqua accent
+  
+  // Status
+  success: "#5DD9A8",         // Mint green
+  danger: "#FF6B7A",          // Rose red
+  warning: "#FFB84A",         // Warm amber
+  
+  // Gradients
+  gradientStart: "#FF6B7A",   // Rose
+  gradientEnd: "#FFB3BC",     // Light rose
 };
 
 type SelectedPlace = {
@@ -1075,41 +1081,6 @@ export default function HomeScreen() {
     loadProfile,
   ]);
 
-  // -----------------------
-  // Profile save (AVATAR!)
-  // -----------------------
-  const handleSaveProfile = useCallback(
-    async ({ displayName, avatarUrl }: SaveProfileParams) => {
-      if (!session?.user) return;
-      const userId = session.user.id;
-
-      try {
-        let finalAvatarUrl: string | null = null;
-
-        if (avatarUrl && avatarUrl.startsWith("file:")) {
-          // Local URI → ArrayBuffer → Upload → public URL
-          const response = await fetch(avatarUrl);
-          const arrayBuffer = await response.arrayBuffer();
-          finalAvatarUrl = await uploadAvatarPublic(userId, arrayBuffer as ArrayBuffer, "jpg");
-        } else {
-          // Already a remote URL (e.g. Supabase public URL)
-          finalAvatarUrl = avatarUrl;
-        }
-
-        await upsertMyProfile(userId, {
-          display_name: displayName,
-          avatar_url: finalAvatarUrl,
-        });
-
-        await loadProfile(userId);
-      } catch (e: any) {
-        console.error("handleSaveProfile error:", e);
-        Alert.alert("Update failed", e?.message ?? "Unknown error");
-        throw e;
-      }
-    },
-    [session, loadProfile]
-  );
 
   // -----------------------
   // UI helpers
@@ -1124,18 +1095,19 @@ export default function HomeScreen() {
     const saveBusy = !!saveBusyMap[item.id];
 
     return (
-      <View style={[styles.trendCard, { borderColor: colors.cardBorder }]}>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <View style={{ paddingHorizontal: 10, paddingVertical: 4, backgroundColor: colors.primary + "30", borderRadius: 12, borderWidth: 1, borderColor: colors.primary + "50" }}>
-            <Text style={{ color: colors.primaryLight, fontSize: 11, fontWeight: "700" }}>{item.category.toUpperCase()}</Text>
+      <View style={styles.trendCard}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <View style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.primary + "15", borderRadius: 12, borderWidth: 0 }}>
+            <Text style={{ color: colors.primary, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 }}>{item.category.toUpperCase()}</Text>
           </View>
         </View>
         <Text style={[styles.trendTitle, { color: colors.text, fontSize: 18, marginBottom: 6 }]}>
           {item.title}
         </Text>
-        <Text style={{ color: colors.sub, marginBottom: 4, fontSize: 13 }}>
-          📍 {item.location}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
+          <Ionicons name="location-sharp" size={14} color={colors.secondary} />
+          <Text style={{ color: colors.sub, fontSize: 13 }}>{item.location}</Text>
+        </View>
         {typeof item.distance_km === "number" && (
           <Text style={{ color: colors.sub }}>
             ~{item.distance_km.toFixed(1)} km away
@@ -1152,30 +1124,36 @@ export default function HomeScreen() {
             style={[
               styles.trendActionButton,
               {
-                borderColor: liked ? colors.primary : colors.cardBorder,
-                backgroundColor: liked ? colors.primary + "20" : "rgba(15, 23, 42, 0.3)",
+                borderColor: liked ? colors.primary : colors.border,
+                backgroundColor: liked ? colors.primary + "15" : colors.cardBg,
                 opacity: likeBusy ? 0.65 : 1,
               },
             ]}
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={{ color: colors.text, fontWeight: "600" }}>
-                {liked ? "❤️ Liked" : "🤍 Like"}
-              </Text>
-              {likeBusy && <ActivityIndicator color="#2563eb" size="small" />}
-            </View>
-            <Text style={{ color: colors.sub, fontSize: 12 }}>
-              {likeCount} like{likeCount === 1 ? "" : "s"}
+            <Ionicons 
+              name={liked ? "heart" : "heart-outline"} 
+              size={18} 
+              color={liked ? colors.primary : colors.text} 
+            />
+            <Text style={{ color: liked ? colors.primary : colors.text, fontWeight: "600", fontSize: 13 }}>
+              {likeCount}
             </Text>
+            {likeBusy && <ActivityIndicator color={colors.primary} size="small" />}
           </Pressable>
 
           <Pressable
             onPress={() => handleOpenComments(item.id)}
-            style={[styles.trendActionButton, { borderColor: colors.cardBorder, backgroundColor: "rgba(15, 23, 42, 0.3)" }]}
+            style={[
+              styles.trendActionButton, 
+              { 
+                borderColor: colors.border, 
+                backgroundColor: colors.cardBg 
+              }
+            ]}
           >
-            <Text style={{ color: colors.text, fontWeight: "600" }}>💬 Comment</Text>
-            <Text style={{ color: colors.sub, fontSize: 12 }}>
-              {commentCount} comment{commentCount === 1 ? "" : "s"}
+            <Ionicons name="chatbubble-outline" size={18} color={colors.text} />
+            <Text style={{ color: colors.text, fontWeight: "600", fontSize: 13 }}>
+              {commentCount}
             </Text>
           </Pressable>
 
@@ -1185,21 +1163,21 @@ export default function HomeScreen() {
             style={[
               styles.trendActionButton,
               {
-                borderColor: saved ? colors.warning : colors.cardBorder,
-                backgroundColor: saved ? colors.warning + "20" : "rgba(15, 23, 42, 0.3)",
+                borderColor: saved ? colors.primary : colors.border,
+                backgroundColor: saved ? colors.primary + "15" : colors.cardBg,
                 opacity: saveBusy ? 0.65 : 1,
               },
             ]}
           >
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={{ color: colors.text, fontWeight: "600" }}>
-                {saved ? "📌 Saved" : "📍 Save"}
-              </Text>
-              {saveBusy && <ActivityIndicator color="#fbbf24" size="small" />}
-            </View>
-            <Text style={{ color: colors.sub, fontSize: 12 }}>
-              {saveCount} save{saveCount === 1 ? "" : "s"}
+            <Ionicons 
+              name={saved ? "bookmark" : "bookmark-outline"} 
+              size={18} 
+              color={saved ? colors.primary : colors.text} 
+            />
+            <Text style={{ color: saved ? colors.primary : colors.text, fontWeight: "600", fontSize: 13 }}>
+              {saveCount}
             </Text>
+            {saveBusy && <ActivityIndicator color={colors.primary} size="small" />}
           </Pressable>
         </View>
       </View>
@@ -1212,8 +1190,8 @@ export default function HomeScreen() {
     const commentBusy = !!commentLikeBusyMap[item.id];
 
     return (
-      <View style={[styles.commentBubble, { borderColor: colors.border }]}>
-        <Text style={{ color: colors.text }}>{item.comment}</Text>
+      <View style={styles.commentBubble}>
+        <Text style={{ color: colors.text, fontSize: 14, lineHeight: 20 }}>{item.comment}</Text>
         <Text style={[styles.commentMeta, { color: colors.sub }]}>
           {(item.user_id ?? "user").slice(0, 6)} • {new Date(item.created_at).toLocaleString()}
         </Text>
@@ -1223,20 +1201,26 @@ export default function HomeScreen() {
           style={[
             styles.commentLikeButton,
             {
-              borderColor: liked ? "#f43f5e" : colors.border,
-              backgroundColor: liked ? "#f43f5e22" : "transparent",
+              borderColor: liked ? colors.primary : colors.border,
+              backgroundColor: liked ? colors.primary + "15" : colors.cardBg,
               opacity: commentBusy ? 0.7 : 1,
             },
           ]}
         >
           {commentBusy ? (
-            <ActivityIndicator color="#f43f5e" size="small" />
+            <ActivityIndicator color={colors.primary} size="small" />
           ) : (
-            <Text style={{ color: colors.text, fontWeight: "600" }}>{liked ? "❤️ Liked" : "🤍 Like"}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons 
+                name={liked ? "heart" : "heart-outline"} 
+                size={14} 
+                color={liked ? colors.primary : colors.text} 
+              />
+              <Text style={{ color: liked ? colors.primary : colors.text, fontWeight: "600", fontSize: 12 }}>
+                {likeCount}
+              </Text>
+            </View>
           )}
-          <Text style={{ color: colors.sub, fontSize: 12 }}>
-            {likeCount} like{likeCount === 1 ? "" : "s"}
-          </Text>
         </Pressable>
       </View>
     );
@@ -1253,13 +1237,9 @@ export default function HomeScreen() {
         style={[
           styles.lbRow,
           { 
-            borderColor: isYou ? colors.accent : colors.cardBorder, 
-            backgroundColor: isYou ? colors.accent + "15" : "rgba(15, 23, 42, 0.3)",
-            shadowColor: isYou ? colors.accent : "transparent",
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: isYou ? 0.3 : 0,
-            shadowRadius: 8,
-            elevation: isYou ? 3 : 0,
+            backgroundColor: isYou ? colors.secondary + "15" : colors.cardBg,
+            shadowColor: isYou ? colors.secondary : "#1A3B3F",
+            shadowOpacity: isYou ? 0.15 : 0.04,
           },
         ]}
       >
@@ -1288,7 +1268,7 @@ export default function HomeScreen() {
               marginLeft: 8,
             }}
           >
-            <Text style={{ color: colors.sub, fontSize: 12 }}>👤</Text>
+            <Ionicons name="person" size={16} color={colors.sub} />
           </View>
         )}
         
@@ -1298,8 +1278,8 @@ export default function HomeScreen() {
             {isYou ? " (You)" : ""}
           </Text>
           <View style={styles.levelBadge}>
-            <Text style={{ fontSize: 16 }}>{level.emoji}</Text>
-            <Text style={{ color: colors.sub, fontWeight: "600" }}>{level.name}</Text>
+            <Ionicons name="star" size={14} color={colors.warning} />
+            <Text style={{ color: colors.sub, fontWeight: "600", fontSize: 12 }}>{level.name}</Text>
           </View>
         </View>
         <Text style={{ color: colors.text, fontWeight: "700" }}>
@@ -1324,25 +1304,26 @@ export default function HomeScreen() {
     return (
       <View style={styles.screen}>
         <View style={{ marginBottom: 24 }}>
-          <Text style={[styles.title, { color: colors.text, fontSize: 36, letterSpacing: 1 }]}>
-            ✨ Locova
-          </Text>
-          <Text style={[styles.subtitle, { color: colors.sub, fontSize: 15, marginTop: 8 }]}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <MaterialCommunityIcons name="star-four-points" size={32} color={colors.primary} />
+            <Text style={[styles.title, { color: colors.text, fontSize: 32, letterSpacing: 0.5 }]}>
+              Locova
+            </Text>
+          </View>
+          <Text style={[styles.subtitle, { color: colors.sub, fontSize: 15 }]}>
             Discover & share local trends
           </Text>
           <View style={{ height: 3, width: 60, backgroundColor: colors.primary, borderRadius: 2, marginTop: 12, opacity: 0.8 }} />
         </View>
 
-        <View
-          style={[styles.card, { borderColor: colors.border }]}
-        >
+        <View style={styles.card}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>
             {isLoginMode ? "Log In" : "Sign Up"}
           </Text>
           <TextInput
             style={[
               styles.input,
-              { borderColor: colors.border, color: colors.text },
+              { color: colors.text },
             ]}
             placeholder="Email"
             placeholderTextColor={colors.sub}
@@ -1354,7 +1335,7 @@ export default function HomeScreen() {
           <TextInput
             style={[
               styles.input,
-              { borderColor: colors.border, color: colors.text },
+              { color: colors.text },
             ]}
             placeholder="Password"
             placeholderTextColor={colors.sub}
@@ -1415,160 +1396,111 @@ export default function HomeScreen() {
         contentContainerStyle={styles.scrollContent}
       >
       <View style={styles.headerRow}>
-        <View>
-          <Text style={[styles.title, { color: colors.text, fontSize: 32, letterSpacing: 0.5 }]}>
-            ✨ Locova
-          </Text>
-          <Text style={[styles.subtitle, { color: colors.sub, fontSize: 14, marginTop: 6 }]}>
-            Hey {profile?.display_name || "Explorer"} 👋
+        <View style={{ flex: 1 }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 4 }}>
+            <MaterialCommunityIcons name="star-four-points" size={28} color={colors.primary} />
+            <Text style={[styles.title, { color: colors.text, fontSize: 28, letterSpacing: 0.5 }]}>
+              Locova
+            </Text>
+          </View>
+          <Text style={[styles.subtitle, { color: colors.sub, fontSize: 13 }]}>
+            Hey {profile?.display_name || "Explorer"}
           </Text>
         </View>
 
-        <View style={{ alignItems: "flex-end" }}>
-          <Text style={{ color: colors.sub, fontSize: 12 }}>
-            Points
+        <LinearGradient
+          colors={[colors.gradientStart, colors.gradientEnd]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={{
+            paddingHorizontal: 20,
+            paddingVertical: 14,
+            borderRadius: 20,
+            alignItems: "center",
+            shadowColor: colors.primary,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.25,
+            shadowRadius: 12,
+            elevation: 6,
+          }}
+        >
+          <Text style={{ color: "rgba(255,255,255,0.7)", fontSize: 9, textTransform: "uppercase", letterSpacing: 1.2, fontWeight: "600" }}>
+            POINTS
           </Text>
-          <Text
-            style={{
-              color: colors.text,
-              fontSize: 18,
-              fontWeight: "700",
-            }}
-          >
+          <Text style={{ color: "#FFFFFF", fontSize: 24, fontWeight: "800", marginTop: 2 }}>
             {userPoints}
           </Text>
-
-          <Pressable
-            onPress={handleSignOut}
-            style={[
-              styles.button,
-              {
-                backgroundColor: "#111827",
-                paddingVertical: 6,
-                paddingHorizontal: 10,
-                marginTop: 6,
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.buttonText,
-                { color: colors.sub, fontSize: 12 },
-              ]}
-            >
-              Log out
-            </Text>
-          </Pressable>
-        </View>
+        </LinearGradient>
       </View>
 
-      <View style={[styles.liveBadge, { borderColor: "#064e3b", backgroundColor: "#065f4630" }]}> 
-        <Text style={{ color: "#a7f3d0", fontSize: 12, fontWeight: "600" }}>
-          🟢 Live updates enabled
+      <View style={{ flexDirection: "row", gap: 10, marginBottom: 16 }}>
+        <View style={{ 
+          flexDirection: "row", 
+          alignItems: "center", 
+          gap: 6, 
+          paddingHorizontal: 16, 
+          paddingVertical: 10, 
+          borderRadius: 999, 
+          backgroundColor: colors.cardBg,
+          shadowColor: "#1A3B3F",
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.04,
+          shadowRadius: 6,
+          elevation: 2,
+        }}>
+          <Ionicons name="location" size={14} color={colors.secondary} />
+          <Text style={{ color: colors.secondary, fontWeight: "600", fontSize: 12 }}>
+            {currentCity || "Unknown"}
+          </Text>
+        </View>
+        <Pressable 
+          onPress={handleSignOut}
+          style={{ 
+            paddingHorizontal: 16, 
+            paddingVertical: 10, 
+            borderRadius: 999, 
+            backgroundColor: colors.cardBg,
+            shadowColor: "#1A3B3F",
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.04,
+            shadowRadius: 6,
+            elevation: 2,
+          }}
+        >
+          <Text style={{ color: colors.sub, fontSize: 12, fontWeight: "600" }}>Log out</Text>
+        </Pressable>
+      </View>
+
+      <View style={{ 
+        flexDirection: "row", 
+        alignItems: "center", 
+        gap: 8, 
+        alignSelf: "flex-start",
+        paddingHorizontal: 16, 
+        paddingVertical: 10, 
+        borderRadius: 999, 
+        backgroundColor: colors.success + "15",
+        borderWidth: 0,
+        marginBottom: 20,
+        shadowColor: colors.success,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.15,
+        shadowRadius: 8,
+        elevation: 3,
+      }}> 
+        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.success }} />
+        <Text style={{ color: colors.success, fontSize: 12, fontWeight: "600" }}>
+          Live updates enabled
         </Text>
       </View>
 
-      {/* Location */}
-      <View
-        style={[styles.card, { borderColor: colors.border }]}
-      >
-        <ProfileEditor
-          colors={colors}
-          userId={session.user.id}
-          initialDisplayName={profile?.display_name ?? ""}
-          initialAvatarUrl={profile?.avatar_url ?? null}
-          onSave={handleSaveProfile}
-        />
-
-        {profileLoading && (
-          <ActivityIndicator color={colors.sub} size="small" />
-        )}
-
-        {/* Notification Status & Test */}
-        <View style={{ marginTop: 16, padding: 12, backgroundColor: colors.cardBg, borderRadius: 8 }}>
-          <Text style={{ color: colors.text, fontWeight: "600", marginBottom: 8 }}>
-            🔔 Push Notifications
-          </Text>
-          
-          {profile?.expo_push_token ? (
-            <>
-              <View
-                style={{
-                  padding: 8,
-                  backgroundColor: "#10b98122",
-                  borderRadius: 6,
-                  borderWidth: 1,
-                  borderColor: "#10b981",
-                  marginBottom: 8,
-                }}
-              >
-                <Text style={{ color: "#10b981", fontSize: 12, fontWeight: "600" }}>
-                  ✅ Enabled
-                </Text>
-              </View>
-              
-              <Text style={{ color: colors.sub, fontSize: 11, marginBottom: 8 }}>
-                Token: {profile.expo_push_token.substring(0, 30)}...
-              </Text>
-              
-              <Pressable
-                onPress={() => {
-                  Alert.alert(
-                    "Test Notifications",
-                    `Your push token:\n\n${profile.expo_push_token}\n\nTo test:\n1. Copy this token\n2. Go to expo.dev/notifications\n3. Paste token and send a test notification`,
-                    [
-                      { text: "Cancel" },
-                      {
-                        text: "Copy Token",
-                        onPress: () => {
-                          // In a real app, use Clipboard API
-                          console.log("📱 Push Token:", profile.expo_push_token);
-                          Alert.alert("Copied", "Check console for token");
-                        },
-                      },
-                    ]
-                  );
-                }}
-                style={[
-                  styles.button,
-                  { backgroundColor: colors.primary, paddingVertical: 8 },
-                ]}
-              >
-                <Text style={[styles.buttonText, { color: colors.text, fontSize: 12 }]}>
-                  Test Notifications
-                </Text>
-              </Pressable>
-            </>
-          ) : (
-            <View
-              style={{
-                padding: 8,
-                backgroundColor: "#ef444422",
-                borderRadius: 6,
-                borderWidth: 1,
-                borderColor: "#ef4444",
-              }}
-            >
-              <Text style={{ color: "#ef4444", fontSize: 12, fontWeight: "600" }}>
-                ⚠️ Not Available in Expo Go
-              </Text>
-              <Text style={{ color: colors.sub, fontSize: 11, marginTop: 4 }}>
-                Requires development build
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
 
       {/* Location & radius */}
-      <View
-        style={[styles.card, { borderColor: colors.border }]}
-      >
-        <Text
-          style={[styles.sectionTitle, { color: colors.text }]}
-        >
-          📍 Location & Radius
-        </Text>
+      <View style={styles.card}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <Ionicons name="location" size={22} color={colors.secondary} />
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Location & Radius</Text>
+        </View>
         <Text style={{ color: colors.sub, marginBottom: 8 }}>
           {currentCity
             ? `Using location: ${currentCity}`
@@ -1605,7 +1537,7 @@ export default function HomeScreen() {
           <TextInput
             style={[
               styles.inputSmall,
-              { borderColor: colors.border, color: colors.text },
+              { color: colors.text },
             ]}
             placeholder="Radius km"
             placeholderTextColor={colors.sub}
@@ -1617,31 +1549,35 @@ export default function HomeScreen() {
 
         <Pressable
           onPress={() => handleChangeTrendsScope("nearby")}
-          style={[
-            styles.button,
-            { backgroundColor: "#111827", marginTop: 8 },
-          ]}
+          style={{
+            backgroundColor: colors.text,
+            paddingVertical: 14,
+            borderRadius: 12,
+            alignItems: "center",
+            justifyContent: "center",
+            marginTop: 12,
+            flexDirection: "row",
+            gap: 8,
+            shadowColor: colors.text,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.15,
+            shadowRadius: 12,
+            elevation: 4,
+          }}
         >
-          <Text
-            style={[
-              styles.buttonText,
-              { color: colors.text },
-            ]}
-          >
-            Load trends within radius
+          <Ionicons name="search" size={18} color="#FFFFFF" />
+          <Text style={{ color: "#FFFFFF", fontWeight: "700", fontSize: 15 }}>
+            Search Nearby Trends
           </Text>
         </Pressable>
       </View>
 
       {/* Add Trend */}
-      <View
-        style={[styles.card, { borderColor: colors.border }]}
-      >
-        <Text
-          style={[styles.sectionTitle, { color: colors.text }]}
-        >
-          ➕ Add a Trend
-        </Text>
+      <View style={styles.card}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <Ionicons name="add-circle" size={22} color={colors.primary} />
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>Add a Trend</Text>
+        </View>
 
         <TextInput
           style={[
@@ -1684,9 +1620,10 @@ export default function HomeScreen() {
         )}
 
         {selectedPlace && (
-          <View style={[styles.selectedPlaceCard, { borderColor: colors.border }]}> 
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.text, fontWeight: "600" }}>📍 {selectedPlace.name}</Text>
+          <View style={styles.selectedPlaceCard}> 
+            <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons name="location-sharp" size={16} color={colors.secondary} />
+              <Text style={{ color: colors.text, fontWeight: "600" }}>{selectedPlace.name}</Text>
               {selectedPlace.address && (
                 <Text style={{ color: colors.sub, fontSize: 12 }}>{selectedPlace.address}</Text>
               )}
@@ -1698,7 +1635,7 @@ export default function HomeScreen() {
         )}
 
         {placeResults.length > 0 && (
-          <View style={[styles.placeResultsContainer, { borderColor: colors.border, backgroundColor: colors.cardBg }]}> 
+          <View style={[styles.placeResultsContainer, { backgroundColor: colors.cardBg }]}> 
             {placeResults.map((place) => (
               <Pressable
                 key={place.place_id}
@@ -1731,23 +1668,29 @@ export default function HomeScreen() {
             {trendSubmitting ? (
               <ActivityIndicator color={colors.text} />
             ) : (
-              <Text
-                style={[
-                  styles.buttonText,
-                  { color: colors.text, fontSize: 15 },
-                ]}
-              >
-                🚀 Post Trend & Earn Points
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="rocket" size={20} color="#FFFFFF" />
+                <Text
+                  style={[
+                    styles.buttonText,
+                    { color: "#FFFFFF", fontSize: 16 },
+                  ]}
+                >
+                  Post Trend & Earn Points
+                </Text>
+              </View>
             )}
           </LinearGradient>
         </Pressable>
       </View>
 
       {session?.user && (
-        <View style={[styles.card, { borderColor: colors.border }]}> 
+        <View style={styles.card}> 
           <View style={styles.rowBetween}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>🤖 Recommended for you</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <MaterialCommunityIcons name="robot-outline" size={22} color={colors.primary} />
+              <Text style={[styles.sectionTitle, { color: colors.text }]}>Recommended for you</Text>
+            </View>
             <Pressable
               onPress={loadRecommended}
               disabled={recommendedLoading}
@@ -1788,15 +1731,12 @@ export default function HomeScreen() {
       )}
 
       {/* Trends List */}
-      <View
-        style={[styles.card, { borderColor: colors.border }]}
-      >
+      <View style={styles.card}>
         <View style={styles.rowBetween}>
-          <Text
-            style={[styles.sectionTitle, { color: colors.text }]}
-          >
-            🔥 Trends
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="flame" size={22} color={colors.primary} />
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Trends</Text>
+          </View>
           <View style={styles.scopeToggle}>
             <Pressable
               onPress={() => handleChangeTrendsScope("global")}
@@ -1851,15 +1791,12 @@ export default function HomeScreen() {
       </View>
 
       {/* Leaderboard */}
-      <View
-        style={[styles.card, { borderColor: colors.border }]}
-      >
+      <View style={styles.card}>
         <View style={styles.rowBetween}>
-          <Text
-            style={[styles.sectionTitle, { color: colors.text }]}
-          >
-            🏆 Leaderboard
-          </Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Ionicons name="trophy" size={22} color={colors.warning} />
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Leaderboard</Text>
+          </View>
           <Pressable
             onPress={() => refreshLeaderboard(leaderboardScope)}
             style={[
@@ -1943,11 +1880,15 @@ export default function HomeScreen() {
             <View
               style={{
                 marginTop: 16,
-                padding: 12,
-                borderWidth: 1,
-                borderColor: colors.border,
-                borderRadius: 12,
-                backgroundColor: "#0ea5e922",
+                padding: 14,
+                borderWidth: 0,
+                borderRadius: 16,
+                backgroundColor: colors.secondary + "15",
+                shadowColor: "#1A3B3F",
+                shadowOffset: { width: 0, height: 2 },
+                shadowOpacity: 0.04,
+                shadowRadius: 10,
+                elevation: 2,
               }}
             >
               <Text style={{ color: colors.sub, fontSize: 12, marginBottom: 4 }}>Your Rank</Text>
@@ -1975,7 +1916,7 @@ export default function HomeScreen() {
                       justifyContent: "center",
                     }}
                   >
-                    <Text style={{ color: colors.sub, fontSize: 12 }}>👤</Text>
+                    <Ionicons name="person" size={16} color={colors.sub} />
                   </View>
                 )}
                 
@@ -1985,9 +1926,9 @@ export default function HomeScreen() {
                       {profile.display_name || "You"}
                     </Text>
                     <View style={styles.levelBadge}>
-                      <Text style={{ fontSize: 18 }}>{userLevel.emoji}</Text>
-                      <Text style={{ color: colors.text, fontWeight: "600" }}>{userLevel.name}</Text>
-                      <Text style={{ color: colors.sub, marginLeft: 8 }}>{userPoints} pts</Text>
+                      <Ionicons name="star" size={16} color={colors.warning} />
+                      <Text style={{ color: colors.text, fontWeight: "600", fontSize: 13 }}>{userLevel.name}</Text>
+                      <Text style={{ color: colors.sub, marginLeft: 8, fontSize: 13 }}>{userPoints} pts</Text>
                     </View>
                   </View>
                 </View>
@@ -2004,7 +1945,7 @@ export default function HomeScreen() {
         onRequestClose={handleCloseComments}
       >
         <View style={styles.modalOverlay}>
-          <View style={[styles.commentSheet, { borderColor: colors.border, backgroundColor: colors.cardBg }]}>
+          <View style={[styles.commentSheet, { backgroundColor: colors.cardBg }]}>
             <View style={styles.commentModalHeader}>
               <View style={{ flex: 1, marginRight: 12 }}>
                 <Text style={{ color: colors.text, fontSize: 16, fontWeight: "700" }} numberOfLines={2}>
@@ -2048,9 +1989,8 @@ export default function HomeScreen() {
                 style={[
                   styles.commentInput,
                   {
-                    borderColor: colors.border,
                     color: colors.text,
-                    backgroundColor: colors.bg,
+                    backgroundColor: "#F5FAFB",
                   },
                 ]}
                 placeholder="Write a comment"
@@ -2112,17 +2052,16 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   card: {
-    borderWidth: 1,
-    borderRadius: 20,
-    padding: 16,
+    borderWidth: 0,
+    borderRadius: 24,
+    padding: 20,
     marginBottom: 16,
     backgroundColor: colors.cardBg,
-    borderColor: colors.cardBorder,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 12,
-    elevation: 5,
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    elevation: 3,
   },
   sectionTitle: {
     fontSize: 18,
@@ -2130,13 +2069,19 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   input: {
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderWidth: 0,
+    borderRadius: 16,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     marginTop: 8,
-    backgroundColor: "rgba(15, 23, 42, 0.4)",
-    borderColor: colors.cardBorder,
+    backgroundColor: "#F5FAFB",
+    color: colors.text,
+    fontSize: 15,
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.03,
+    shadowRadius: 4,
+    elevation: 1,
   },
   inputSmall: {
     borderWidth: 1,
@@ -2146,16 +2091,16 @@ const styles = StyleSheet.create({
     width: 90,
   },
   button: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 24,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    elevation: 5,
   },
   buttonText: {
     fontWeight: "700",
@@ -2178,23 +2123,24 @@ const styles = StyleSheet.create({
   scopeToggle: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
+    backgroundColor: "#F5FAFB",
+    borderRadius: 16,
+    padding: 4,
   },
   scopeToggleButton: {
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: "rgba(15, 23, 42, 0.3)",
+    borderWidth: 0,
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: "transparent",
   },
   scopeToggleButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primaryLight,
-    shadowColor: colors.primary,
+    backgroundColor: colors.secondary,
+    shadowColor: colors.secondary,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.4,
-    shadowRadius: 6,
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
     elevation: 3,
   },
   liveBadge: {
@@ -2206,53 +2152,63 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   trendCard: {
-    borderWidth: 1,
+    borderWidth: 0,
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 14,
+    backgroundColor: colors.cardBg,
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  trendTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    marginBottom: 4,
+    color: colors.text,
+  },
+  lbRow: {
+    borderWidth: 0,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: colors.cardBg,
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 10,
+    elevation: 2,
+  },
+  trendActionsRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+  },
+  trendActionButton: {
+    flex: 1,
+    borderWidth: 1.5,
+    borderRadius: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  commentBubble: {
+    borderWidth: 0,
     borderRadius: 16,
     padding: 14,
     marginBottom: 12,
     backgroundColor: colors.cardBg,
-    borderColor: colors.cardBorder,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 10,
-    elevation: 4,
-  },
-  trendTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  lbRow: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  trendActionsRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginTop: 10,
-  },
-  trendActionButton: {
-    flex: 1,
-    borderWidth: 1,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    alignItems: "flex-start",
-    justifyContent: "center",
-  },
-  commentBubble: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 10,
-    backgroundColor: colors.cardBg,
-    borderColor: colors.cardBorder,
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
   },
   commentMeta: {
     marginTop: 6,

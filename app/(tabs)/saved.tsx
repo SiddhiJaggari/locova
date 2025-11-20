@@ -1,3 +1,4 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Session } from "@supabase/supabase-js";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -16,12 +17,14 @@ import { fetchSavedTrends, toggleTrendSave } from "../../services/trends";
 import { Trend } from "../../type";
 
 const colors = {
-  bg: "#050816",
-  cardBg: "#0b1120",
-  text: "#f9fafb",
-  sub: "#9ca3af",
-  border: "#1f2937",
-  buttonBg: "#2563eb",
+  bg: "#F0F9FA",           // Light aqua background
+  cardBg: "#FFFFFF",       // White cards
+  text: "#1A3B3F",         // Deep teal text
+  sub: "#5A7B7E",          // Muted teal
+  border: "#D4E8EA",       // Soft aqua border
+  neonCyan: "#6ECFD9",     // Bright aqua
+  primary: "#FF6B7A",      // Rose red
+  violet: "#9B8FFF",       // Soft purple
 };
 
 export default function SavedTrendsScreen() {
@@ -113,13 +116,13 @@ export default function SavedTrendsScreen() {
     if (!userId) {
       return "Log in to start bookmarking your favorite trends.";
     }
-    return "No saved trends yet. Tap the 📍 Save button to store favorites.";
+    return "No saved trends yet. Tap the Save button on any trend to bookmark it.";
   }, [userId]);
 
   if (loading && !refreshing) {
     return (
-      <View style={[styles.screen, { justifyContent: "center", alignItems: "center" }]}>
-        <ActivityIndicator color={colors.buttonBg} />
+      <View style={[styles.screen, { justifyContent: "center", alignItems: "center", backgroundColor: colors.bg }]}>
+        <ActivityIndicator color={colors.neonCyan} />
       </View>
     );
   }
@@ -127,35 +130,56 @@ export default function SavedTrendsScreen() {
   return (
     <View style={[styles.screen, { backgroundColor: colors.bg }]}>
       <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.text }]}>📌 Saved Trends</Text>
-        <Text style={{ color: colors.sub }}>
-          {userId ? `${savedTrends.length} saved` : "Sign in to sync your saves"}
-        </Text>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <Ionicons name="bookmark" size={28} color={colors.primary} />
+          <Text style={[styles.title, { color: colors.text }]}>Saved Trends</Text>
+        </View>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 4 }}>
+          {userId && <Ionicons name="checkmark-circle" size={14} color={colors.neonCyan} />}
+          <Text style={{ color: colors.sub, fontSize: 13 }}>
+            {userId ? `${savedTrends.length} saved` : "Sign in to sync your saves"}
+          </Text>
+        </View>
       </View>
 
       <FlatList
         data={savedTrends}
         keyExtractor={(item) => item.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.buttonBg} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={colors.neonCyan} />}
         contentContainerStyle={{ paddingBottom: 32, flexGrow: 1 }}
         ListEmptyComponent={
           <View style={styles.emptyState}>
-            <Text style={{ color: colors.sub, textAlign: "center" }}>{emptyState}</Text>
+            <Ionicons name="bookmark-outline" size={64} color={colors.border} style={{ marginBottom: 16 }} />
+            <Text style={{ color: colors.sub, textAlign: "center", fontSize: 15 }}>{emptyState}</Text>
           </View>
         }
         renderItem={({ item }) => (
-          <View style={[styles.card, { borderColor: colors.border, backgroundColor: colors.cardBg }]}>
+          <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <View style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.primary + "15", borderRadius: 12, borderWidth: 0 }}>
+                <Text style={{ color: colors.primary, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 }}>{item.category.toUpperCase()}</Text>
+              </View>
+            </View>
             <Text style={[styles.cardTitle, { color: colors.text }]}>{item.title}</Text>
-            <Text style={{ color: colors.sub }}>{item.category} • {item.location}</Text>
-            <Text style={{ color: colors.sub, fontSize: 12, marginTop: 4 }}>
-              {new Date(item.created_at).toLocaleString()}
-            </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
+              <Ionicons name="location-sharp" size={14} color={colors.neonCyan} />
+              <Text style={{ color: colors.sub, fontSize: 13 }}>{item.location}</Text>
+            </View>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
+              <Ionicons name="time-outline" size={14} color={colors.sub} />
+              <Text style={{ color: colors.sub, fontSize: 12 }}>
+                {new Date(item.created_at).toLocaleString()}
+              </Text>
+            </View>
 
             <Pressable
               onPress={() => handleToggleSave(item.id)}
-              style={[styles.saveButton, { borderColor: colors.border }]}
+              style={[styles.saveButton, { borderColor: colors.primary, backgroundColor: colors.primary + "15" }]}
             >
-              <Text style={{ color: colors.text, fontWeight: "600" }}>Remove</Text>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="trash-outline" size={16} color={colors.primary} />
+                <Text style={{ color: colors.primary, fontWeight: "600" }}>Remove</Text>
+              </View>
             </Pressable>
           </View>
         )}
@@ -185,10 +209,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   card: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
+    borderWidth: 0,
+    borderRadius: 20,
+    padding: 18,
+    marginBottom: 14,
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 12,
+    elevation: 2,
   },
   cardTitle: {
     fontSize: 18,
@@ -197,9 +226,9 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     marginTop: 12,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderRadius: 999,
-    paddingVertical: 8,
+    paddingVertical: 10,
     alignItems: "center",
   },
 });
