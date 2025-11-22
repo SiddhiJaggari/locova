@@ -1,11 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from "expo-location";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ActivityIndicator, Alert, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import MapView, { Marker, Region } from "react-native-maps";
+import MapViewDirections from "react-native-maps-directions";
 
 import { supabase } from "../lib/supabase";
 import { Trend } from "../type";
+
+const GOOGLE_MAPS_API_KEY =
+  process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY || "";
 
 const DEFAULT_REGION: Region = {
   latitude: 37.7749,
@@ -23,12 +27,23 @@ function getTrendCoordinate(trend: Trend) {
   return null;
 }
 
-export default function TrendMap() {
+type TrendMapProps = {
+  focus?: {
+    latitude: number;
+    longitude: number;
+    title?: string;
+    location?: string;
+    origin?: { latitude: number; longitude: number } | null;
+  } | null;
+};
+
+export default function TrendMap({ focus }: TrendMapProps) {
   const [trends, setTrends] = useState<Trend[]>([]);
   const [initialRegion, setInitialRegion] = useState<Region | null>(null);
   const [locationError, setLocationError] = useState<string | null>(null);
   const [loadingLocation, setLoadingLocation] = useState(true);
   const [loadingTrends, setLoadingTrends] = useState(true);
+  const mapRef = useRef<MapView | null>(null);
 
   const loadTrends = useCallback(async () => {
     try {
@@ -48,6 +63,18 @@ export default function TrendMap() {
   }, []);
 
   const resolveLocation = useCallback(async () => {
+    if (focus) {
+      setInitialRegion({
+        latitude: focus.latitude,
+        longitude: focus.longitude,
+        latitudeDelta: 0.05,
+        longitudeDelta: 0.05,
+      });
+      setLoadingLocation(false);
+      setLocationError(null);
+      return;
+    }
+
     try {
       setLoadingLocation(true);
       setLocationError(null);
@@ -84,6 +111,27 @@ export default function TrendMap() {
     [trends]
   );
 
+  const hasPolylineDirections = Boolean(GOOGLE_MAPS_API_KEY);
+
+  const openExternalDirections = useCallback(async () => {
+    if (!focus) return;
+
+    const destination = `${focus.latitude},${focus.longitude}`;
+    const url = Platform.select({
+      ios: `http://maps.apple.com/?daddr=${destination}`,
+      default: `https://www.google.com/maps/dir/?api=1&destination=${destination}`,
+    });
+
+    try {
+      if (url) {
+        await Linking.openURL(url);
+      }
+    } catch (err) {
+      console.warn("Failed to open maps", err);
+      Alert.alert("Directions", "Couldn't open your maps app.");
+    }
+  }, [focus]);
+
   const handleRefresh = useCallback(() => {
     resolveLocation();
     loadTrends();
@@ -93,11 +141,36 @@ export default function TrendMap() {
     <View style={styles.container}>
       {initialRegion ? (
         <MapView
+          ref={(ref) => {
+            mapRef.current = ref;
+          }}
           style={styles.map}
           initialRegion={initialRegion}
           showsUserLocation
           showsMyLocationButton
         >
+          {focus && focus.origin && hasPolylineDirections && (
+            <MapViewDirections
+              origin={focus.origin}
+              destination={{ latitude: focus.latitude, longitude: focus.longitude }}
+              apikey={GOOGLE_MAPS_API_KEY}
+              strokeWidth={5}
+              strokeColor="#FF6B7A"
+              onError={(errorMessage: string) => {
+                console.warn("MapViewDirections error", errorMessage);
+              }}
+              onReady={(result: { coordinates: { latitude: number; longitude: number }[] }) => {
+                try {
+                  mapRef.current?.fitToCoordinates(result.coordinates, {
+                    edgePadding: { top: 80, right: 80, bottom: 80, left: 80 },
+                    animated: true,
+                  });
+                } catch (fitError) {
+                  console.warn("fitToCoordinates failed", fitError);
+                }
+              }}
+            />
+          )}
           {trendsWithCoords.map((trend) => {
             const coordinate = getTrendCoordinate(trend);
             if (!coordinate) return null;
@@ -119,23 +192,40 @@ export default function TrendMap() {
       )}
 
       <View style={styles.overlay} pointerEvents="box-none">
-        {(locationError || loadingTrends) && (
+        {(locationError || loadingTrends || focus) && (
           <View style={styles.statusChip}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
               {loadingTrends && <ActivityIndicator size="small" color="#6ECFD9" />}
               {locationError && <Ionicons name="warning-outline" size={16} color="#FF6B7A" />}
+              {focus && (
+                <Ionicons name="navigate" size={16} color="#6ECFD9" />
+              )}
               <Text style={styles.statusText}>
-                {locationError ?? "Loading trends…"}
+                {focus
+                  ? focus.origin && hasPolylineDirections
+                    ? `Directions to ${focus.title ?? "trend"}${focus.location ? ` · ${focus.location}` : ""}`
+                    : "Tap 'Open in Maps' for turn-by-turn directions"
+                  : (locationError ?? "Loading trends…")}
               </Text>
             </View>
           </View>
         )}
-        <Pressable style={styles.refreshButton} onPress={handleRefresh}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-            <Ionicons name="refresh" size={18} color="#FFFFFF" />
-            <Text style={styles.refreshButtonText}>Refresh</Text>
-          </View>
-        </Pressable>
+        <View style={styles.overlayButtons}>
+          <Pressable style={styles.refreshButton} onPress={handleRefresh}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Ionicons name="refresh" size={18} color="#FFFFFF" />
+              <Text style={styles.refreshButtonText}>Refresh</Text>
+            </View>
+          </Pressable>
+          {focus && !hasPolylineDirections && (
+            <Pressable style={styles.externalDirectionsButton} onPress={openExternalDirections}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                <Ionicons name="open-outline" size={18} color="#1A3B3F" />
+                <Text style={styles.externalDirectionsText}>Open in Maps</Text>
+              </View>
+            </Pressable>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -198,6 +288,27 @@ const styles = StyleSheet.create({
   },
   refreshButtonText: {
     color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  overlayButtons: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  externalDirectionsButton: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: "rgba(255,255,255,0.95)",
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  externalDirectionsText: {
+    color: "#1A3B3F",
     fontWeight: "700",
     fontSize: 14,
   },

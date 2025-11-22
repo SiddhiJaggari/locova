@@ -1,6 +1,45 @@
 // services/trends.ts
 import { supabase } from "../lib/supabase";
-import { Trend, TrendComment } from "../type";
+import { Trend, TrendComment, UserProfile } from "../type";
+
+async function fetchAuthorProfiles(userIds: string[]): Promise<Record<string, UserProfile>> {
+  if (userIds.length === 0) {
+    return {};
+  }
+
+  const { data, error } = await supabase
+    .from("user_profiles")
+    .select("id, display_name, avatar_url")
+    .in("id", userIds);
+
+  if (error) throw error;
+
+  const map: Record<string, UserProfile> = {};
+  (data ?? []).forEach((profile) => {
+    map[profile.id] = profile as UserProfile;
+  });
+  return map;
+}
+
+export async function hydrateTrendAuthors(trends: Trend[]): Promise<Trend[]> {
+  const uniqueIds = Array.from(
+    new Set(
+      trends
+        .map((trend) => trend.user_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0)
+    )
+  );
+
+  if (uniqueIds.length === 0) {
+    return trends;
+  }
+
+  const authorMap = await fetchAuthorProfiles(uniqueIds);
+  return trends.map((trend) => ({
+    ...trend,
+    author_profile: trend.user_id ? authorMap[trend.user_id] : undefined,
+  }));
+}
 
 export async function fetchTrendsUnified(
   coords: { lat: number; lng: number } | null,
@@ -14,13 +53,13 @@ export async function fetchTrendsUnified(
       radius_km: radiusKm,
     });
     if (error) throw error;
-    return (data as Trend[]) ?? [];
+    return hydrateTrendAuthors(((data as Trend[]) ?? []));
   } else {
     const qb = supabase.from("trends").select("*").order("created_at", { ascending: false });
     if (city && city.trim()) qb.ilike("location", `%${city}%`);
     const { data, error } = await qb;
     if (error) throw error;
-    return (data as Trend[]) ?? [];
+    return hydrateTrendAuthors(((data as Trend[]) ?? []));
   }
 }
 
@@ -55,7 +94,8 @@ export async function fetchSavedTrends(userId: string): Promise<Trend[]> {
   if (error) throw error;
 
   const rows = (data as unknown as { trend_id: string; trends: Trend | null }[] | null) ?? [];
-  return rows.map((row) => row.trends).filter((trend): trend is Trend => Boolean(trend));
+  const trends = rows.map((row) => row.trends).filter((trend): trend is Trend => Boolean(trend));
+  return hydrateTrendAuthors(trends);
 }
 
 export function subscribeTrends(onChange: () => void) {

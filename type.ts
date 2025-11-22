@@ -29,6 +29,13 @@ export type Trend = {
   // Day 13 save metadata
   save_count?: number;
   saved_by_current_user?: boolean;
+
+  // Author profile metadata (populated client-side)
+  author_profile?: {
+    id: string;
+    display_name?: string | null;
+    avatar_url?: string | null;
+  };
 };
 
 // A row from `user_profiles`

@@ -6,36 +6,38 @@ import * as Device from "expo-device";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
+import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  FlatList,
-  Image,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    ActivityIndicator,
+    Alert,
+    Animated,
+    FlatList,
+    Image,
+    Modal,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 
 import { supabase } from "../../lib/supabase";
 import { GooglePlaceResult, searchPlaces } from "../../services/places";
 import {
-  getMyProfile
+    getMyProfile
 } from "../../services/profile";
 import { fetchRecommendedTrends } from "../../services/recommendations";
 import {
-  fetchCommentEngagement,
-  fetchTrendComments,
-  fetchTrendEngagement,
-  submitTrendComment,
-  toggleCommentLike,
-  toggleTrendLike,
-  toggleTrendSave
+    fetchCommentEngagement,
+    fetchTrendComments,
+    fetchTrendEngagement,
+    hydrateTrendAuthors,
+    submitTrendComment,
+    toggleCommentLike,
+    toggleTrendLike,
+    toggleTrendSave
 } from "../../services/trends";
 import { LeaderboardRow, Trend, TrendComment, UserProfile } from "../../type";
 import { getUserLevel } from "../../utils/level";
@@ -164,6 +166,7 @@ const AnimatedPressable = ({ children, onPress, style, disabled }: any) => {
 };
 
 export default function HomeScreen() {
+  const router = useRouter();
   // Auth
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -312,7 +315,8 @@ export default function HomeScreen() {
     try {
       setRecommendedLoading(true);
       const data = await fetchRecommendedTrends();
-      setRecommendedTrends(data ?? []);
+      const hydrated = await hydrateTrendAuthors(data ?? []);
+      setRecommendedTrends(hydrated);
     } catch (error: any) {
       console.error("fetchRecommendedTrends error:", error);
       Alert.alert("Error", error?.message ?? "Failed to load recommendations");
@@ -511,6 +515,67 @@ export default function HomeScreen() {
   // -----------------------
   // Loaders
   // -----------------------
+  const getTrendCoordinate = useCallback((trend: Trend) => {
+    const latitude = trend.latitude ?? trend.lat;
+    const longitude = trend.longitude ?? trend.lng;
+    if (typeof latitude === "number" && typeof longitude === "number") {
+      return { latitude, longitude };
+    }
+    return null;
+  }, []);
+
+  const ensureCurrentCoords = useCallback(async () => {
+    if (typeof currentLat === "number" && typeof currentLng === "number") {
+      return { latitude: currentLat, longitude: currentLng };
+    }
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert(
+          "Permission needed",
+          "Allow location access so we can guide you to the trend."
+        );
+        return null;
+      }
+
+      const position = await Location.getCurrentPositionAsync({});
+      setCurrentLat(position.coords.latitude);
+      setCurrentLng(position.coords.longitude);
+      return { latitude: position.coords.latitude, longitude: position.coords.longitude };
+    } catch (error) {
+      console.error("ensureCurrentCoords error:", error);
+      Alert.alert("Location error", "Couldn't fetch your current location.");
+      return null;
+    }
+  }, [currentLat, currentLng]);
+
+  const handleGetDirections = useCallback(
+    async (trend: Trend) => {
+      const coords = getTrendCoordinate(trend);
+      if (!coords) {
+        Alert.alert("Location unavailable", "This trend doesn't have coordinates yet.");
+        return;
+      }
+
+      const origin = await ensureCurrentCoords();
+      if (!origin) return;
+
+      router.push({
+        pathname: "/(tabs)/map",
+        params: {
+          lat: coords.latitude.toString(),
+          lng: coords.longitude.toString(),
+          title: trend.title,
+          location: trend.location ?? "",
+          originLat: origin.latitude.toString(),
+          originLng: origin.longitude.toString(),
+        },
+      });
+    },
+    [ensureCurrentCoords, getTrendCoordinate, router]
+  );
+
   const loadProfile = useCallback(async (userId: string) => {
     try {
       setProfileLoading(true);
@@ -534,7 +599,8 @@ export default function HomeScreen() {
         .limit(50);
 
       if (error) throw error;
-      setTrends((data ?? []) as Trend[]);
+      const hydrated = await hydrateTrendAuthors(((data ?? []) as Trend[]));
+      setTrends(hydrated);
     } catch (e) {
       console.error("loadTrends error:", e);
       Alert.alert("Error", "Failed to load trends");
@@ -581,7 +647,8 @@ export default function HomeScreen() {
       });
 
       if (error) throw error;
-      setTrends((data ?? []) as Trend[]);
+      const hydrated = await hydrateTrendAuthors(((data ?? []) as Trend[]));
+      setTrends(hydrated);
     } catch (e) {
       console.error("loadNearbyTrends error:", e);
       Alert.alert("Error", "Failed to load nearby trends");
@@ -1147,9 +1214,28 @@ export default function HomeScreen() {
     const saveCount = saveCounts[item.id] ?? item.save_count ?? 0;
     const likeBusy = !!likeBusyMap[item.id];
     const saveBusy = !!saveBusyMap[item.id];
+    const author = item.author_profile;
+    const directionsDisabled = !getTrendCoordinate(item);
 
     return (
       <View style={styles.trendCard}>
+        {author && (
+          <View style={styles.authorRow}>
+            {author.avatar_url ? (
+              <Image source={{ uri: author.avatar_url }} style={styles.authorAvatar} />
+            ) : (
+              <View style={styles.authorAvatarFallback}>
+                <Text style={{ color: "#fff", fontWeight: "700" }}>
+                  {(author.display_name ?? "?").slice(0, 2).toUpperCase()}
+                </Text>
+              </View>
+            )}
+            <View>
+              <Text style={styles.authorName}>{author.display_name ?? "Locova explorer"}</Text>
+              <Text style={styles.authorMeta}>Shared this trend</Text>
+            </View>
+          </View>
+        )}
         <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <View style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.primary + "15", borderRadius: 12, borderWidth: 0 }}>
             <Text style={{ color: colors.primary, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 }}>{item.category.toUpperCase()}</Text>
@@ -1232,6 +1318,25 @@ export default function HomeScreen() {
               {saveCount}
             </Text>
             {saveBusy && <ActivityIndicator color={colors.primary} size="small" />}
+          </Pressable>
+
+          <Pressable
+            accessibilityLabel={`Get directions to ${item.title}`}
+            onPress={() => {
+              void handleGetDirections(item);
+            }}
+            disabled={directionsDisabled}
+            style={[
+              styles.trendActionButton,
+              styles.directionIconButton,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.cardBg,
+                opacity: directionsDisabled ? 0.45 : 1,
+              },
+            ]}
+          >
+            <Ionicons name="navigate-outline" size={18} color={colors.text} />
           </Pressable>
         </View>
       </View>
@@ -2250,6 +2355,34 @@ const styles = StyleSheet.create({
     gap: 10,
     marginTop: 16,
   },
+  authorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 12,
+  },
+  authorAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  authorAvatarFallback: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: "#FF6B7A",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  authorName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  authorMeta: {
+    fontSize: 12,
+    color: colors.sub,
+  },
   trendActionButton: {
     flex: 1,
     borderWidth: 1.5,
@@ -2258,6 +2391,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: 6,
+  },
+  directionIconButton: {
+    flexBasis: 48,
+    maxWidth: 48,
+    paddingHorizontal: 0,
   },
   commentBubble: {
     borderWidth: 0,

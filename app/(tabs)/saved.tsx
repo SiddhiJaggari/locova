@@ -1,10 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Session } from "@supabase/supabase-js";
+import * as Location from "expo-location";
+import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
     FlatList,
+    Image,
     Pressable,
     RefreshControl,
     StyleSheet,
@@ -32,8 +35,20 @@ export default function SavedTrendsScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [savedTrends, setSavedTrends] = useState<Trend[]>([]);
+  const [currentLat, setCurrentLat] = useState<number | null>(null);
+  const [currentLng, setCurrentLng] = useState<number | null>(null);
+  const router = useRouter();
 
   const userId = session?.user?.id ?? null;
+
+  const getTrendCoordinate = useCallback((trend: Trend) => {
+    const latitude = trend.latitude ?? trend.lat;
+    const longitude = trend.longitude ?? trend.lng;
+    if (typeof latitude === "number" && typeof longitude === "number") {
+      return { latitude, longitude };
+    }
+    return null;
+  }, []);
 
   const loadSavedTrends = useCallback(
     async (options?: { silent?: boolean }) => {
@@ -63,6 +78,55 @@ export default function SavedTrendsScreen() {
       }
     },
     [userId]
+  );
+
+  const ensureCurrentCoords = useCallback(async () => {
+    if (typeof currentLat === "number" && typeof currentLng === "number") {
+      return { latitude: currentLat, longitude: currentLng };
+    }
+
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== "granted") {
+        Alert.alert("Permission needed", "Allow location access to get directions.");
+        return null;
+      }
+
+      const pos = await Location.getCurrentPositionAsync({});
+      setCurrentLat(pos.coords.latitude);
+      setCurrentLng(pos.coords.longitude);
+      return { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+    } catch (error) {
+      console.error("ensureCurrentCoords error:", error);
+      Alert.alert("Location error", "Couldn't fetch your current location.");
+      return null;
+    }
+  }, [currentLat, currentLng]);
+
+  const handleGetDirections = useCallback(
+    async (trend: Trend) => {
+      const coords = getTrendCoordinate(trend);
+      if (!coords) {
+        Alert.alert("Location unavailable", "This trend doesn't have coordinates yet.");
+        return;
+      }
+
+      const origin = await ensureCurrentCoords();
+      if (!origin) return;
+
+      router.push({
+        pathname: "/(tabs)/map",
+        params: {
+          lat: coords.latitude.toString(),
+          lng: coords.longitude.toString(),
+          title: trend.title,
+          location: trend.location ?? "",
+          originLat: origin.latitude.toString(),
+          originLng: origin.longitude.toString(),
+        },
+      });
+    },
+    [ensureCurrentCoords, getTrendCoordinate, router]
   );
 
   useEffect(() => {
@@ -155,6 +219,23 @@ export default function SavedTrendsScreen() {
         }
         renderItem={({ item }) => (
           <View style={[styles.card, { backgroundColor: colors.cardBg }]}>
+            {item.author_profile && (
+              <View style={styles.authorRow}>
+                {item.author_profile.avatar_url ? (
+                  <Image source={{ uri: item.author_profile.avatar_url }} style={styles.authorAvatar} />
+                ) : (
+                  <View style={styles.authorAvatarFallback}>
+                    <Text style={{ color: "#fff", fontWeight: "700" }}>
+                      {(item.author_profile.display_name ?? "?").slice(0, 2).toUpperCase()}
+                    </Text>
+                  </View>
+                )}
+                <View>
+                  <Text style={styles.authorName}>{item.author_profile.display_name ?? "Locova explorer"}</Text>
+                  <Text style={styles.authorMeta}>Shared this trend</Text>
+                </View>
+              </View>
+            )}
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
               <View style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.primary + "15", borderRadius: 12, borderWidth: 0 }}>
                 <Text style={{ color: colors.primary, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 }}>{item.category.toUpperCase()}</Text>
@@ -172,15 +253,31 @@ export default function SavedTrendsScreen() {
               </Text>
             </View>
 
-            <Pressable
-              onPress={() => handleToggleSave(item.id)}
-              style={[styles.saveButton, { borderColor: colors.primary, backgroundColor: colors.primary + "15" }]}
-            >
-              <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                <Ionicons name="trash-outline" size={16} color={colors.primary} />
-                <Text style={{ color: colors.primary, fontWeight: "600" }}>Remove</Text>
-              </View>
-            </Pressable>
+            <View style={styles.buttonRow}>
+              <Pressable
+                accessibilityLabel={`Get directions to ${item.title}`}
+                onPress={() => {
+                  void handleGetDirections(item);
+                }}
+                style={[
+                  styles.directionButton,
+                  styles.directionIconButton,
+                  { borderColor: colors.border, backgroundColor: colors.cardBg },
+                ]}
+              >
+                <Ionicons name="navigate-outline" size={16} color={colors.text} />
+              </Pressable>
+
+              <Pressable
+                onPress={() => handleToggleSave(item.id)}
+                style={[styles.saveButton, { borderColor: colors.primary, backgroundColor: colors.primary + "15" }]}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Ionicons name="trash-outline" size={16} color={colors.primary} />
+                  <Text style={{ color: colors.primary, fontWeight: "600" }}>Remove</Text>
+                </View>
+              </Pressable>
+            </View>
           </View>
         )}
       />
@@ -224,11 +321,60 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     marginBottom: 4,
   },
+  authorRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 10,
+  },
+  authorAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+  },
+  authorAvatarFallback: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  authorName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: colors.text,
+  },
+  authorMeta: {
+    fontSize: 12,
+    color: colors.sub,
+  },
   saveButton: {
     marginTop: 12,
     borderWidth: 1.5,
     borderRadius: 999,
     paddingVertical: 10,
     alignItems: "center",
+  },
+  buttonRow: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 14,
+  },
+  directionButton: {
+    flex: 1,
+    borderRadius: 999,
+    borderWidth: 1.5,
+    paddingVertical: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  directionIconButton: {
+    flex: 0,
+    flexBasis: 54,
+    maxWidth: 54,
+    paddingHorizontal: 0,
   },
 });
