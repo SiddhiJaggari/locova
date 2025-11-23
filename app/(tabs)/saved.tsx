@@ -236,17 +236,17 @@ export default function SavedTrendsScreen() {
                 </View>
               </View>
             )}
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 12 }}>
               <View style={{ paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.primary + "15", borderRadius: 12, borderWidth: 0 }}>
                 <Text style={{ color: colors.primary, fontSize: 11, fontWeight: "700", letterSpacing: 0.5 }}>{item.category.toUpperCase()}</Text>
               </View>
             </View>
             <Text style={[styles.cardTitle, { color: colors.text }]}>{item.title}</Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8 }}>
               <Ionicons name="location-sharp" size={14} color={colors.neonCyan} />
               <Text style={{ color: colors.sub, fontSize: 13 }}>{item.location}</Text>
             </View>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 6 }}>
               <Ionicons name="time-outline" size={14} color={colors.sub} />
               <Text style={{ color: colors.sub, fontSize: 12 }}>
                 {new Date(item.created_at).toLocaleString()}
@@ -261,11 +261,13 @@ export default function SavedTrendsScreen() {
                 }}
                 style={[
                   styles.directionButton,
-                  styles.directionIconButton,
-                  { borderColor: colors.border, backgroundColor: colors.cardBg },
+                  { borderColor: colors.neonCyan, backgroundColor: colors.neonCyan + "10" },
                 ]}
               >
-                <Ionicons name="navigate-outline" size={16} color={colors.text} />
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <Ionicons name="navigate-outline" size={16} color={colors.neonCyan} />
+                  <Text style={{ color: colors.neonCyan, fontWeight: "600", fontSize: 14 }}>Directions</Text>
+                </View>
               </Pressable>
 
               <Pressable
@@ -274,7 +276,7 @@ export default function SavedTrendsScreen() {
               >
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <Ionicons name="trash-outline" size={16} color={colors.primary} />
-                  <Text style={{ color: colors.primary, fontWeight: "600" }}>Remove</Text>
+                  <Text style={{ color: colors.primary, fontWeight: "600", fontSize: 14 }}>Remove</Text>
                 </View>
               </Pressable>
             </View>
@@ -308,8 +310,8 @@ const styles = StyleSheet.create({
   card: {
     borderWidth: 0,
     borderRadius: 20,
-    padding: 18,
-    marginBottom: 14,
+    padding: 20,
+    marginBottom: 16,
     shadowColor: "#1A3B3F",
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
@@ -324,8 +326,8 @@ const styles = StyleSheet.create({
   authorRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
+    gap: 12,
+    marginBottom: 12,
   },
   authorAvatar: {
     width: 40,
@@ -350,31 +352,27 @@ const styles = StyleSheet.create({
     color: colors.sub,
   },
   saveButton: {
-    marginTop: 12,
+    flex: 1,
+    borderRadius: 12,
     borderWidth: 1.5,
-    borderRadius: 999,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     alignItems: "center",
   },
   buttonRow: {
     flexDirection: "row",
-    gap: 10,
-    marginTop: 14,
+    gap: 12,
+    marginTop: 16,
   },
   directionButton: {
     flex: 1,
-    borderRadius: 999,
+    borderRadius: 12,
     borderWidth: 1.5,
-    paddingVertical: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-  },
-  directionIconButton: {
-    flex: 0,
-    flexBasis: 54,
-    maxWidth: 54,
-    paddingHorizontal: 0,
   },
 });
