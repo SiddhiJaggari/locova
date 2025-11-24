@@ -36,6 +36,26 @@ export type Trend = {
     display_name?: string | null;
     avatar_url?: string | null;
   };
+
+  // Google Places integration fields
+  rating?: number;
+  total_ratings?: number;
+  place_id?: string;
+  is_google_place?: boolean;
+  opening_now?: boolean;
+  price_level?: number;
+  formatted_phone_number?: string;
+  website?: string;
+  photos?: string[];
+  reviews?: GoogleReview[];
+};
+
+// Google Places review type
+export type GoogleReview = {
+  author_name: string;
+  rating: number;
+  text: string;
+  relative_time_description: string;
 };
 
 // A row from `user_profiles`

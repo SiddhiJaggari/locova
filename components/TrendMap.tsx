@@ -6,6 +6,7 @@ import MapView, { Marker, Region } from "react-native-maps";
 import MapViewDirections from "react-native-maps-directions";
 
 import { supabase } from "../lib/supabase";
+import { automatedPlacesService } from "../services/automatedPlaces";
 import { Trend } from "../type";
 
 const GOOGLE_MAPS_API_KEY =
@@ -54,12 +55,35 @@ export default function TrendMap({ focus }: TrendMapProps) {
   const loadTrends = useCallback(async () => {
     try {
       setLoadingTrends(true);
-      const { data, error } = await supabase
+      
+      // Start automated discovery if not running
+      if (!automatedPlacesService.getStatus().isRunning) {
+        await automatedPlacesService.startAutomatedDiscovery();
+      }
+      
+      // Load local trends
+      const { data: localTrends, error: localError } = await supabase
         .from("trends")
         .select("id,title,category,location,latitude,longitude,lat,lng,created_at");
 
-      if (error) throw error;
-      setTrends((data as Trend[]) ?? []);
+      if (localError) throw localError;
+      
+      let allTrends = (localTrends as Trend[]) ?? [];
+      
+      // Get automated Google Places
+      try {
+        console.log("🤖 Fetching automated Google Places...");
+        const automatedPlaces = await automatedPlacesService.getAutomatedPlaces();
+        
+        // Combine local trends with automated Google Places
+        allTrends = [...automatedPlaces, ...allTrends];
+        console.log(`🎯 Loaded ${automatedPlaces.length} automated places + ${allTrends.length - automatedPlaces.length} local trends`);
+      } catch (automatedError) {
+        console.warn("Failed to load automated places:", automatedError);
+        // Continue with local trends if automated fails
+      }
+      
+      setTrends(allTrends);
     } catch (err: any) {
       console.error("Trend map fetch error:", err);
       Alert.alert("Error", err?.message ?? "Failed to load map data");
@@ -179,6 +203,13 @@ export default function TrendMap({ focus }: TrendMapProps) {
     }
   }, [travelMethod, focus, showDirectionsInfo, calculateDistanceInfo]);
 
+  // Cleanup automated service on unmount
+  useEffect(() => {
+    return () => {
+      automatedPlacesService.stopAutomatedDiscovery();
+    };
+  }, []);
+
   const trendsWithCoords = useMemo(
     () => trends.filter((trend) => getTrendCoordinate(trend) != null),
     [trends]
@@ -226,10 +257,22 @@ export default function TrendMap({ focus }: TrendMapProps) {
 
   const hasPolylineDirections = Boolean(GOOGLE_MAPS_API_KEY && focus && focus.origin);
 
-  const handleRefresh = useCallback(() => {
+  const handleRefresh = useCallback(async () => {
+    console.log("🔄 Refreshing trends with automated service...");
+    
+    // Force refresh automated places
+    try {
+      await automatedPlacesService.refreshAutomatedPlaces();
+    } catch (error) {
+      console.warn("Failed to refresh automated places:", error);
+    }
+    
+    // Reload trends
+    await loadTrends();
+    
+    // Update location if needed
     resolveLocation();
-    loadTrends();
-  }, [resolveLocation, loadTrends]);
+  }, [loadTrends, resolveLocation]);
 
   return (
     <View style={styles.container}>
@@ -277,12 +320,22 @@ export default function TrendMap({ focus }: TrendMapProps) {
           {trendsWithCoords.map((trend: Trend) => {
             const coordinate = getTrendCoordinate(trend);
             if (!coordinate) return null;
+            
+            const isGooglePlace = trend.is_google_place;
+            const pinColor = isGooglePlace ? '#FF6B7A' : '#6ECFD9';
+            
+            let description = `${trend.category} · ${trend.location}`;
+            if (isGooglePlace && trend.rating) {
+              description = `⭐ ${trend.rating} (${trend.total_ratings || 0}) · ${trend.category} · ${trend.location}`;
+            }
+            
             return (
               <Marker
                 key={trend.id}
                 coordinate={coordinate}
                 title={trend.title}
-                description={`${trend.category} · ${trend.location}`}
+                description={description}
+                pinColor={pinColor}
               />
             );
           })}
@@ -354,6 +407,22 @@ export default function TrendMap({ focus }: TrendMapProps) {
                   <Ionicons name="time" size={16} color="#6ECFD9" />
                   <Text style={styles.statText}>{estimatedTime}</Text>
                 </View>
+              </View>
+            )}
+            
+            {/* Map Legend */}
+            {!showDirectionsInfo && (
+              <View style={styles.mapLegend}>
+                <Text style={styles.legendTitle}>🤖 Smart Discovery</Text>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: '#FF6B7A' }]} />
+                  <Text style={styles.legendText}>Google Places</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: '#6ECFD9' }]} />
+                  <Text style={styles.legendText}>Local Trends</Text>
+                </View>
+                <Text style={styles.legendSubtitle}>Auto-updating every 5 min</Text>
               </View>
             )}
             
@@ -732,5 +801,48 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontWeight: "700",
     fontSize: 14,
+  },
+  // Map Legend Styles
+  mapLegend: {
+    position: "absolute",
+    bottom: 80,
+    left: 16,
+    backgroundColor: "rgba(255, 255, 255, 0.95)",
+    borderRadius: 12,
+    padding: 12,
+    shadowColor: "#1A3B3F",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  legendTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#1A3B3F",
+    marginBottom: 8,
+  },
+  legendItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  legendText: {
+    fontSize: 12,
+    color: "#5A7B7E",
+    fontWeight: "500",
+  },
+  legendSubtitle: {
+    fontSize: 10,
+    color: "#5A7B7E",
+    fontWeight: "400",
+    fontStyle: "italic",
+    marginTop: 4,
   },
 });
