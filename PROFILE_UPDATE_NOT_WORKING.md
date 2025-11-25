@@ -154,7 +154,7 @@ console.log('User ID:', session?.user?.id);
 
 **In Supabase SQL Editor:**
 ```sql
-SELECT id, email FROM auth.users WHERE email = 'your-email@example.com';
+SELECT id, email FROM auth.users WHERE email = 'your-actual-email@example.com';
 ```
 
 **Make sure they match!**

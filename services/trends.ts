@@ -8,7 +8,7 @@ async function fetchAuthorProfiles(userIds: string[]): Promise<Record<string, Us
   }
 
   const { data, error } = await supabase
-    .from("user_profiles")
+    .from("profiles")
     .select("id, display_name, avatar_url")
     .in("id", userIds);
 
@@ -206,7 +206,7 @@ export async function submitTrendComment(trendId: string, userId: string, commen
 
 export async function toggleCommentLike(commentId: string, userId: string): Promise<"liked" | "unliked"> {
   const { data: existing, error: fetchError } = await supabase
-    .from("trend_comment_likes")
+    .from("comment_likes")
     .select("id")
     .eq("comment_id", commentId)
     .eq("user_id", userId)
@@ -215,12 +215,12 @@ export async function toggleCommentLike(commentId: string, userId: string): Prom
   if (fetchError) throw fetchError;
 
   if (existing) {
-    const { error } = await supabase.from("trend_comment_likes").delete().eq("id", existing.id);
+    const { error } = await supabase.from("comment_likes").delete().eq("id", existing.id);
     if (error) throw error;
     return "unliked";
   }
 
-  const { error } = await supabase.from("trend_comment_likes").insert({ comment_id: commentId, user_id: userId });
+  const { error } = await supabase.from("comment_likes").insert({ comment_id: commentId, user_id: userId });
   if (error) throw error;
   return "liked";
 }
@@ -234,7 +234,7 @@ export async function fetchCommentEngagement(
   }
 
   const { data, error } = await supabase
-    .from("trend_comment_likes")
+    .from("comment_likes")
     .select("comment_id,user_id")
     .in("comment_id", commentIds);
 

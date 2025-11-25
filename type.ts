@@ -22,13 +22,10 @@ export type Trend = {
   // Present only when using the `trends_within_radius` RPC
   distance_km?: number;
 
-  // Day 10 engagement metadata
-  like_count?: number;
-  comment_count?: number;
-  liked_by_current_user?: boolean;
-  // Day 13 save metadata
-  save_count?: number;
-  saved_by_current_user?: boolean;
+  // Day 10 engagement metadata - calculated dynamically
+  // like_count, comment_count, liked_by_current_user are calculated from separate tables
+  // Day 13 save metadata - calculated dynamically
+  // save_count, saved_by_current_user are calculated from trend_saves table
 
   // Author profile metadata (populated client-side)
   author_profile?: {
@@ -82,8 +79,7 @@ export type TrendComment = {
   user_id: string;
   comment: string;
   created_at: string;
-  like_count?: number;
-  liked_by_current_user?: boolean;
+  // like_count and liked_by_current_user are calculated dynamically from trend_comment_likes table
 };
 
 export type TrendSave = {

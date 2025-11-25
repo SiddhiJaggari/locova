@@ -18,6 +18,7 @@ import {
 } from "react-native";
 
 import { supabase } from "../../lib/supabase";
+import { getMyProfile } from "../../services/profile";
 
 const colors = {
   bg: "#F0F9FA",
@@ -38,8 +39,11 @@ const TERMS_URL = "https://example.com/terms";
 
 interface Profile {
   id: string;
-  display_name: string | null;
-  avatar_url: string | null;
+  points: number;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  expo_push_token?: string | null;
+  created_at?: string;
 }
 
 export default function SettingsScreen() {
@@ -52,7 +56,7 @@ export default function SettingsScreen() {
   const [notifEnabled, setNotifEnabled] = useState(true);
   const [marketingEnabled, setMarketingEnabled] = useState(false);
   const [displayName, setDisplayName] = useState("");
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarUrl, setAvatarUrl] = useState<string | null | undefined>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -63,11 +67,7 @@ export default function SettingsScreen() {
       setSession(data.session ?? null);
       
       if (data.session?.user) {
-        const { data: profileData } = await supabase
-          .from("user_profiles")
-          .select("*")
-          .eq("id", data.session.user.id)
-          .single();
+        const profileData = await getMyProfile(data.session.user.id);
         
         if (profileData && mounted) {
           setProfile(profileData);
@@ -188,8 +188,9 @@ export default function SettingsScreen() {
       console.log('Display name:', displayName);
       console.log('Avatar URL:', finalAvatarUrl);
       
+      // Update basic profile data in profiles table
       const { data: updateData, error } = await supabase
-        .from("user_profiles")
+        .from("profiles")
         .update({
           display_name: displayName || null,
           avatar_url: finalAvatarUrl,
@@ -212,12 +213,11 @@ export default function SettingsScreen() {
         
         // Try to insert instead
         const { error: insertError } = await supabase
-          .from("user_profiles")
+          .from("profiles")
           .insert({
             id: session.user.id,
             display_name: displayName || null,
             avatar_url: finalAvatarUrl,
-            points: 0,
           });
         
         if (insertError) {
@@ -229,11 +229,7 @@ export default function SettingsScreen() {
       Alert.alert("Success", "Profile updated successfully!");
       
       // Refresh profile
-      const { data: profileData } = await supabase
-        .from("user_profiles")
-        .select("*")
-        .eq("id", session.user.id)
-        .single();
+      const profileData = await getMyProfile(session.user.id);
       
       if (profileData) {
         setProfile(profileData);

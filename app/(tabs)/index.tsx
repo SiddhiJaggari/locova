@@ -23,6 +23,8 @@ import {
     View,
 } from "react-native";
 
+import ForgotPassword from "../../components/ForgotPassword";
+import SetNewPassword from "../../components/SetNewPassword";
 import { supabase } from "../../lib/supabase";
 import { GooglePlaceResult, searchPlaces } from "../../services/places";
 import {
@@ -40,6 +42,7 @@ import {
     toggleTrendSave
 } from "../../services/trends";
 import { LeaderboardRow, Trend, TrendComment, UserProfile } from "../../type";
+import { EmailValidator } from "../../utils/emailValidation";
 import { getUserLevel } from "../../utils/level";
 
 // Configure notification handler
@@ -173,6 +176,10 @@ export default function HomeScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoginMode, setIsLoginMode] = useState(true);
+  // Forgot password state
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [showSetNewPassword, setShowSetNewPassword] = useState(false);
+  const [resetToken, setResetToken] = useState<string | undefined>();
 
   // Profile
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -694,13 +701,29 @@ export default function HomeScreen() {
 
       const { data: profiles, error: profilesError } = await supabase
         .from("user_profiles")
-        .select("id, points, display_name, avatar_url")
+        .select(`
+          id,
+          points,
+          profiles!inner (
+            display_name,
+            avatar_url
+          )
+        `)
         .in("id", uniqueUserIds)
         .order("points", { ascending: false })
         .limit(10);
 
       if (profilesError) throw profilesError;
-      setLeaderboard((profiles ?? []) as LeaderboardRow[]);
+      
+      // Transform the joined data to match LeaderboardRow format
+      const transformedProfiles = (profiles ?? []).map((profile: any) => ({
+        id: profile.id,
+        points: profile.points,
+        display_name: profile.profiles.display_name,
+        avatar_url: profile.profiles.avatar_url,
+      }));
+      
+      setLeaderboard(transformedProfiles as LeaderboardRow[]);
     } catch (e) {
       console.error("loadLeaderboardNearby error:", e);
       Alert.alert("Error", "Failed to load nearby leaderboard");
@@ -1010,17 +1033,43 @@ export default function HomeScreen() {
       return;
     }
 
+    // ✅ Advanced email validation
+    const emailValidation = EmailValidator.validate(email);
+    if (!emailValidation.isValid) {
+      let message = emailValidation.error || "Invalid email address";
+      if (emailValidation.suggestion) {
+        message += `\n\nDid you mean: ${emailValidation.suggestion}?`;
+      }
+      Alert.alert("Invalid email", message);
+      return;
+    }
+
+    // ✅ Password strength check
+    if (password.length < 6) {
+      Alert.alert("Weak password", "Password must be at least 6 characters long.");
+      return;
+    }
+
     try {
       setAuthLoading(true);
       const { error } = await supabase.auth.signUp({
-        email,
+        email: email.trim().toLowerCase(), // Normalize email
         password,
+        options: {
+          emailRedirectTo: undefined, // Disable email redirects for now
+        }
       });
       if (error) throw error;
-      Alert.alert("Success", "Check your email to confirm sign up.");
+      Alert.alert("Success", "Account created! Please check your email to verify your account.");
     } catch (e: any) {
       console.error("signUp error:", e);
-      Alert.alert("Sign up failed", e?.message ?? "Unknown error");
+      if (e.message?.includes('User already registered')) {
+        Alert.alert("Account exists", "This email is already registered. Try signing in instead.");
+      } else if (e.message?.includes('over_email_rate_limit')) {
+        Alert.alert("Too many attempts", "Please wait a few minutes before trying again.");
+      } else {
+        Alert.alert("Sign up failed", e?.message ?? "Unknown error");
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -1032,16 +1081,28 @@ export default function HomeScreen() {
       return;
     }
 
+    // ✅ Email validation for sign-in too
+    if (!EmailValidator.isValid(email)) {
+      Alert.alert("Invalid email", "Please enter a valid email address.");
+      return;
+    }
+
     try {
       setAuthLoading(true);
       const { error } = await supabase.auth.signInWithPassword({
-        email,
+        email: email.trim().toLowerCase(), // Normalize email
         password,
       });
       if (error) throw error;
     } catch (e: any) {
       console.error("signIn error:", e);
-      Alert.alert("Sign in failed", e?.message ?? "Unknown error");
+      if (e.message?.includes('Invalid login credentials')) {
+        Alert.alert("Sign in failed", "Invalid email or password. Please check your credentials and try again.");
+      } else if (e.message?.includes('over_email_rate_limit')) {
+        Alert.alert("Too many attempts", "Please wait a few minutes before trying again.");
+      } else {
+        Alert.alert("Sign in failed", e?.message ?? "Unknown error");
+      }
     } finally {
       setAuthLoading(false);
     }
@@ -1053,6 +1114,49 @@ export default function HomeScreen() {
     } catch (e) {
       console.error("signOut error:", e);
     }
+  }, []);
+
+  // -----------------------
+  // Forgot Password Handlers
+  // -----------------------
+  const handleForgotPassword = useCallback(() => {
+    setShowForgotPassword(true);
+  }, []);
+
+  const handleCloseForgotPassword = useCallback(() => {
+    setShowForgotPassword(false);
+  }, []);
+
+  const handleForgotPasswordSuccess = useCallback((email: string) => {
+    setShowForgotPassword(false);
+    // Pre-fill the email in the login form
+    setEmail(email);
+    Alert.alert(
+      'Email Sent',
+      `Check ${email} for reset instructions. Don't forget to check your spam folder!`,
+      [{ text: 'OK' }]
+    );
+  }, []);
+
+  const handleSetNewPassword = useCallback((token?: string) => {
+    setResetToken(token);
+    setShowSetNewPassword(true);
+    setShowForgotPassword(false);
+  }, []);
+
+  const handleCloseSetNewPassword = useCallback(() => {
+    setShowSetNewPassword(false);
+    setResetToken(undefined);
+  }, []);
+
+  const handlePasswordUpdateSuccess = useCallback(() => {
+    setShowSetNewPassword(false);
+    setResetToken(undefined);
+    Alert.alert(
+      '✅ Password Updated!',
+      'Your password has been successfully updated. You can now log in with your new password.',
+      [{ text: 'OK' }]
+    );
   }, []);
 
   // -----------------------
@@ -1208,10 +1312,10 @@ export default function HomeScreen() {
   // -----------------------
   const renderTrendItem = ({ item }: { item: Trend }) => {
     const liked = likedTrendIds.includes(item.id);
-    const likeCount = likeCounts[item.id] ?? item.like_count ?? 0;
-    const commentCount = commentCounts[item.id] ?? item.comment_count ?? 0;
+    const likeCount = likeCounts[item.id] ?? 0;
+    const commentCount = commentCounts[item.id] ?? 0;
     const saved = savedTrendIds.includes(item.id);
-    const saveCount = saveCounts[item.id] ?? item.save_count ?? 0;
+    const saveCount = saveCounts[item.id] ?? 0;
     const likeBusy = !!likeBusyMap[item.id];
     const saveBusy = !!saveBusyMap[item.id];
     const author = item.author_profile;
@@ -1345,7 +1449,7 @@ export default function HomeScreen() {
 
   const renderCommentItem = ({ item }: { item: TrendComment }) => {
     const liked = likedCommentIds.includes(item.id);
-    const likeCount = commentLikeCounts[item.id] ?? item.like_count ?? 0;
+    const likeCount = commentLikeCounts[item.id] ?? 0;
     const commentBusy = !!commentLikeBusyMap[item.id];
 
     return (
@@ -1539,6 +1643,18 @@ export default function HomeScreen() {
                 : "Already have an account? Log in"}
             </Text>
           </Pressable>
+
+          {/* Forgot Password Link - Only show in login mode */}
+          {isLoginMode && (
+            <Pressable
+              onPress={handleForgotPassword}
+              style={{ marginTop: 8 }}
+            >
+              <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '600' }}>
+                Forgot your password?
+              </Text>
+            </Pressable>
+          )}
         </View>
       </View>
     );
@@ -2119,8 +2235,8 @@ export default function HomeScreen() {
                 </Text>
                 {activeTrend && (
                   <Text style={{ color: colors.sub, fontSize: 12, marginTop: 2 }}>
-                    {(commentCounts[activeTrend.id] ?? activeTrend.comment_count ?? trendComments.length)} comment
-                    {(commentCounts[activeTrend.id] ?? activeTrend.comment_count ?? trendComments.length) === 1 ? "" : "s"}
+                    {(commentCounts[activeTrend.id] ?? trendComments.length)} comment
+                    {(commentCounts[activeTrend.id] ?? trendComments.length) === 1 ? "" : "s"}
                   </Text>
                 )}
               </View>
@@ -2185,6 +2301,39 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Forgot Password Modal */}
+      <Modal
+        visible={showForgotPassword}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCloseForgotPassword}
+      >
+        <View style={styles.forgotPasswordModalOverlay}>
+          <ForgotPassword
+            colors={colors}
+            onClose={handleCloseForgotPassword}
+            onSuccess={handleForgotPasswordSuccess}
+          />
+        </View>
+      </Modal>
+
+      {/* Set New Password Modal */}
+      <Modal
+        visible={showSetNewPassword}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={handleCloseSetNewPassword}
+      >
+        <View style={styles.forgotPasswordModalOverlay}>
+          <SetNewPassword
+            colors={colors}
+            onClose={handleCloseSetNewPassword}
+            onSuccess={handlePasswordUpdateSuccess}
+            resetToken={resetToken}
+          />
         </View>
       </Modal>
     </>
@@ -2496,5 +2645,12 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+  },
+  forgotPasswordModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
   },
 });
